@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PII Redaction Showcase · Echtzeit-Anonymisierung im Browser</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #151a22;
+    --panel2: #1a212c;
+    --border: #263041;
+    --text: #dbe2ee;
+    --muted: #8b98ad;
+    --accent: #5eead4;
+    --accent2: #7dd3fc;
+    --person: #f0abfc;
+    --contact: #7dd3fc;
+    --location: #86efac;
+    --org: #fcd34d;
+    --id: #fda4af;
+    --finance: #fdba74;
+    --date: #c4b5fd;
+    --net: #67e8f9;
+    --health: #f87171;
+    --other: #94a3b8;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --serif: Georgia, "Times New Roman", serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: radial-gradient(1200px 600px at 70% -10%, #16202e 0%, var(--bg) 60%);
+    color: var(--text);
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    display: flex; flex-direction: column;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #2a3648; border-radius: 99px; border: 2px solid var(--bg); }
+  ::-webkit-scrollbar-thumb:hover { background: #3a4a63; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  header {
+    padding: 18px 26px 12px;
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 19px; margin: 0; letter-spacing: .2px; }
+  header h1 span { color: var(--accent); }
+  .badge {
+    font-family: var(--mono); font-size: 11px; padding: 3px 9px;
+    border: 1px solid var(--border); border-radius: 999px; color: var(--muted);
+    background: var(--panel);
+  }
+  .badge.ok { color: var(--accent); border-color: rgba(94,234,212,.35); }
+  .badge.warn { color: #fbbf24; border-color: rgba(251,191,36,.35); }
+  main {
+    flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
+    padding: 18px 26px; min-height: 0;
+  }
+  @media (max-width: 980px) {
+    main { grid-template-columns: 1fr; padding: 14px; gap: 14px; }
+    header { padding: 14px 16px 10px; }
+    footer { padding: 8px 16px 14px; }
+    section.pane { min-height: 340px; }
+    #statusbar { position: static; justify-content: center; margin: 0 auto 12px; }
+    .doc, #output { font-size: 16px; }
+    select, button { min-height: 38px; }
+    input[type="range"] { width: 90px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation-duration: .01s !important; }
+  }
+  section.pane {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    display: flex; flex-direction: column; min-height: 420px; overflow: hidden;
+    box-shadow: 0 8px 30px rgba(0,0,0,.25);
+  }
+  ::selection { background: rgba(94,234,212,.25); }
+  .doc:focus { box-shadow: inset 0 0 0 2px rgba(94,234,212,.25); }
+  .pane-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    font-size: 13px; color: var(--muted); background: var(--panel2);
+  }
+  .pane-head b { color: var(--text); font-weight: 600; }
+  .doc {
+    flex: 1; width: 100%; resize: none; border: 0; outline: 0;
+    background: transparent; color: var(--text);
+    font-family: var(--serif); font-size: 15.5px; line-height: 1.72;
+    padding: 20px 24px; white-space: pre-wrap;
+  }
+  #output {
+    flex: 1; overflow: auto; padding: 20px 24px;
+    font-family: var(--serif); font-size: 15.5px; line-height: 1.95; white-space: pre-wrap;
+  }
+  mark.red {
+    border-radius: 6px; padding: 1px 7px 2px; cursor: help;
+    font-family: var(--mono); font-size: 12px; font-weight: 600;
+    background: color-mix(in srgb, var(--cat) 16%, transparent);
+    color: var(--cat); border: 1px solid color-mix(in srgb, var(--cat) 45%, transparent);
+    box-decoration-break: clone;
+    transition: background .15s ease;
+  }
+  mark.red:hover { background: color-mix(in srgb, var(--cat) 30%, transparent); }
+  mark.reveal { background: color-mix(in srgb, var(--cat) 30%, #000 10%); }
+  mark.pseudo {
+    background: color-mix(in srgb, var(--cat) 10%, transparent);
+    color: var(--cat); font-family: inherit; font-size: inherit; font-weight: 600;
+    border-bottom: 2px dotted color-mix(in srgb, var(--cat) 55%, transparent);
+    padding: 0 2px;
+  }
+  .btnrow { display: flex; gap: 6px; }
+  .toolbar {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 10px 16px; border-top: 1px solid var(--border); background: var(--panel2);
+    font-size: 12.5px; color: var(--muted);
+  }
+  .toolbar label { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+  input[type="range"] { accent-color: var(--accent); width: 110px; }
+  select, button {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 5px 10px; font-size: 12.5px; cursor: pointer;
+    transition: border-color .15s ease, color .15s ease, transform .05s ease;
+  }
+  select:hover, button:hover { border-color: var(--accent); color: var(--accent); }
+  button:active { transform: translateY(1px); }
+  select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  aside#entities {
+    border-top: 1px solid var(--border); background: var(--panel2);
+    max-height: 190px; overflow: auto; padding: 10px 16px;
+    transition: max-height .2s ease;
+  }
+  aside#entities:empty::after { content: "Noch keine Entitäten erkannt."; color: var(--muted); font-size: 12.5px; }
+  .ent {
+    display: inline-flex; align-items: center; gap: 7px; margin: 3px 6px 3px 0;
+    font-family: var(--mono); font-size: 11.5px; padding: 4px 9px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
+    animation: pop .18s ease;
+  }
+  @keyframes pop { from { opacity: 0; transform: translateY(3px); } }
+  .ent i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--cat); }
+  .ent small { color: var(--muted); }
+  footer {
+    padding: 10px 26px 16px; color: var(--muted); font-size: 12px;
+    display: flex; gap: 18px; flex-wrap: wrap; align-items: center;
+  }
+  footer a { color: var(--accent2); text-decoration: none; }
+  #statusbar {
+    position: fixed; right: 22px; bottom: 52px; z-index: 50;
+    font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 7px 12px; display: flex; gap: 14px;
+  }
+  #statusbar b { color: var(--accent); font-weight: 600; }
+  #overlay {
+    position: fixed; inset: 0; z-index: 100; display: grid; place-items: center;
+    background: rgba(10,13,18,.82); backdrop-filter: blur(6px);
+    transition: opacity .45s ease; 
+  }
+  #overlay.hidden { opacity: 0; pointer-events: none; }
+  .card {
+    width: min(520px, 90vw); background: var(--panel); border: 1px solid var(--border);
+    border-radius: 16px; padding: 30px 34px; text-align: left;
+  }
+  .card h2 { margin: 0 0 6px; font-size: 18px; }
+  .card p { margin: 4px 0 14px; color: var(--muted); font-size: 13.5px; line-height: 1.55; }
+  .track { height: 8px; background: #0b0e13; border-radius: 99px; overflow: hidden; border: 1px solid var(--border); }
+  .fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .25s ease; }
+  .row { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11.5px; color: var(--muted); margin-top: 7px; }
+  .spin {
+    width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; display: inline-block; animation: r 0.8s linear infinite; vertical-align: -2px; margin-right: 6px;
+  }
+  @keyframes r { to { transform: rotate(360deg); } }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 8px 16px 12px; font-size: 11px; font-family: var(--mono); color: var(--muted); }
+  .legend span::before { content: "● "; color: var(--cat); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>med redact <span>·</span> Echtzeit-PII-Anonymisierung</h1>
+  <span class="badge" id="backendBadge">lädt…</span>
+  <span class="badge" id="modelBadge">bardsai/eu-pii-anonimization-multilang</span>
+  <span class="badge" id="classesBadge">36 GDPR-Klassen · DE nativ</span>
+  <span class="badge" id="gpuBadge">WebGPU?</span>
+</header>
+
+<main>
+  <section class="pane">
+    <div class="pane-head">
+      <b>Original · Gutachten (editierbar)</b>
+      <span style="display:flex; gap:6px; align-items:center;">
+        <select id="optPreset" title="Beispieltext wählen">
+          <option value="neuro">Neurologisches Gutachten</option>
+          <option value="kardio">Kardiologischer Befund</option>
+          <option value="kfz">Kfz-Sachverständigengutachten</option>
+        </select>
+        <button id="btnReset">Zurücksetzen</button>
+      </span>
+    </div>
+    <textarea id="input" class="doc" spellcheck="false"></textarea>
+    <div class="toolbar">
+      <label>Modell
+        <select id="optModel">
+          <option value="bardsai">EU-Multilingual (bardsai)</option>
+          <option value="shield">Shield-82M (LH-Tech)</option>
+          <option value="rampart">Rampart (NDS, 14.7 MB)</option>
+          <option value="openai">OpenAI Privacy Filter (1.4B MoE)</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="optRegex" checked> Regex-Hybrid-Layer</label>
+      <label><input type="checkbox" id="optKeepGeo"> Stadt/Bundesland/PLZ behalten <small style="color:var(--muted)">(Rampart-Policy)</small></label>
+      <label>Schwelle ≥ <input type="range" id="optConf" min="0" max="95" value="35"> <span id="confVal" style="min-width:34px">0.35</span></label>
+      <label>Anzeige
+        <select id="optMode">
+          <option value="bracket">[KLASSE]</option>
+          <option value="label">private_klasse</option>
+          <option value="block">██████</option>
+          <option value="pseudo">Pseudonyme</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="optReveal"> Original anzeigen</label>
+    </div>
+  </section>
+
+  <section class="pane">
+    <div class="pane-head">
+      <b>Redigiert · anonymisiert</b>
+      <span style="display:flex; gap:8px; align-items:center;">
+        <span id="outMeta"></span>
+        <span class="btnrow">
+          <button id="btnCopy" title="Anonymisierten Text kopieren">Kopieren</button>
+          <button id="btnTxt" title="Als .txt herunterladen">.txt</button>
+          <button id="btnJson" title="Entity-Report als .json herunterladen">.json</button>
+        </span>
+      </span>
+    </div>
+    <div id="output"></div>
+    <aside id="entities"></aside>
+    <div class="legend" id="legend"></div>
+  </section>
+</main>
+
+<div id="statusbar">
+  <span>Inferenz <b id="stLat">–</b></span>
+  <span>Entities <b id="stEnt">–</b></span>
+  <span>Tokens <b id="stTok">–</b></span>
+</div>
+
+<footer>
+  <span>Alle Daten bleiben lokal im Browser – kein Server, kein Upload.</span>
+  <span>Beispieldaten fiktiv.</span>
+  <span>Modell-Quellen: <a href="https://huggingface.co/bardsai/eu-pii-anonimization-multilang" target="_blank" rel="noopener">bardsai/eu-pii-multilang</a> · <a href="https://huggingface.co/LH-Tech-AI/Shield-82M" target="_blank" rel="noopener">Shield-82M</a> · <a href="https://github.com/nationaldesignstudio/rampart" target="_blank" rel="noopener">Rampart</a> (CC-BY-4.0 / Apache-2.0)</span>
+</footer>
+
+<div id="overlay">
+  <div class="card">
+    <h2>Modell wird geladen …</h2>
+    <p>Einmaliger Download des quantisierten ONNX-Modells inkl. Tokenizer. Danach läuft die Anonymisierung vollständig lokal – in Echtzeit, direkt auf deiner GPU.</p>
+    <div class="track"><div class="fill" id="loadFill"></div></div>
+    <div class="row"><span id="loadFile">verbinde …</span><span id="loadPct">0%</span></div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "@huggingface/transformers": "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0",
+    "@nationaldesignstudio/rampart": "./rampart/index.js"
+  }
+}
+</script>
+<script type="module">
+import {
+  AutoTokenizer, AutoModelForTokenClassification, env,
+} from '@huggingface/transformers';
+import {
+  detectHeuristics, premask, projectMaskedSpan, loadNerClassifier, detectNer, applyPolicy,
+} from '@nationaldesignstudio/rampart';
+
+// GitHub-Pages-Variante: alle Gewichte werden direkt vom Hugging-Face-CDN
+// geladen (nichts davon liegt im Repository). Die Inferenz selbst läuft
+// weiterhin ausschließlich lokal im Browser – es werden keine Texte gesendet.
+env.allowLocalModels = false;
+env.allowRemoteModels = true;
+
+const PRESETS = {
+  neuro: `Gutachtliche Stellungnahme
+
+Patient: Herr Dr. med. Tobias Brandmüller, geboren am 14.03.1968, wohnhaft Lindenstraße 28, 80333 München.
+Versichertennr.: K784512903 (AOK Bayern). Telefon: +49 171 2345678 · E-Mail: t.brandmueller@web.de
+
+Aufgrund der neurologischen Vorstellung am 12.06.2026 in der Neurologischen Klinik Schwabing, Kölner Platz 1, wird folgender Befund mitgeteilt: Die MRT-Untersuchung vom 02.07.2026 zeigt eine umschriebene Signalanhebung zervikal. Die Beschwerden bestehen seit einem Verkehrsunfall am 28.05.2026 (Fahrzeugkennzeichen M-QB 128).
+
+Erstattung der Fahrtkosten bitte auf IBAN DE89 3704 0044 0532 0130 00.
+Gutachter: Prof. Dr. rer. nat. Henrik Zwickl-Groß, Gutachten-Nr. GUT-2026-004711, ausgestellt am 03.08.2026 in München.`,
+  kardio: `Kardiologischer Befundbericht · Herzkatheterlabor
+
+Frau Dr. Sabine Hofer-Fischbach, Oberärztin der Kardiologie, bitte ich um Stellungnahme für
+Herrn Alois Hintermeier, geb. 02.11.1957, Ahornweg 17, 53115 Bonn, Tel.: 0228 6543210,
+E-Mail: a.hintermeier@gmx.de, versichert bei der Techniker Krankheit (Mitgliedsnr. T987654321).
+
+Koronarangiographie vom 19.05.2026: RIVA-Stenose 70 %, RCX unauffällig. EF 55 %.
+Medikation: ASS 100 mg 1-0-1, Bisoprolol 5 mg. Kontrolle am 30.09.2026 im Herzkatheter Bonn.
+
+Rechnungsempfänger: Praxis Dr. Edwin Salcher-Schmidt, Kaiserstraße 112, 76133 Karlsruhe.
+Auslagenersatz: IBAN DE44 5001 0517 5407 3249 31 · BIC INGDDEFFXXX.`,
+  kfz: `Sachverständigengutachten nach Verkehrsunfall
+
+Auftraggeber: Rechtsanwalt Bülow & Partner, Königsallee 59, 40212 Düsseldorf
+Geschäftszeichen: RA-2025-88123 · Schadennummer: SCH-77/449201
+
+Unfallhergang: Am 17.02.2026, 08:42 Uhr kollidierte der Pkw des Herrn Emre Yalçinkaya
+(Kennzeichen D-HL 927, FIN: WVWZZZ1KZXW583962) an der Kreuzung Graf-Adolf-Straße/Ecke
+Mittelstraße mit dem Fahrzeug von Frau Petra Lindqvist (K-KD 558).
+
+Fahrerlaubnis: Klasse B, ausgestellt am 03.04.2011, Führerscheinnr. DEU48291FGL7.
+Gutachter: Dipl.-Ing. Markus Ohnemus-Terrada, öffentlich bestellt und vereidigt.
+Telefonische Rückfragen: +49 211 998877 · schaden@ohnemus-gutachten.de
+Honorarabrechnung auf IBAN DE12 3006 0601 0912 3456 78.`,
+};
+
+const CAT = (ty) => {
+  if (ty === 'private_person') return 'person';
+  if (ty === 'private_email' || ty === 'private_phone') return 'contact';
+  if (ty === 'private_address') return 'location';
+  if (ty === 'private_date') return 'date';
+  if (ty === 'private_url') return 'net';
+  if (ty === 'account_number') return 'finance';
+  if (ty === 'secret') return 'id';
+  if (/^PERSON|^PROPER|^FIRSTNAME|^LASTNAME|^MIDDLENAME|^PREFIX|^USER|^GIVEN_NAME|^SURNAME/.test(ty)) return 'person';
+  if (/EMAIL|PHONE|CONTACT/.test(ty)) return 'contact';
+  if (/LOCATION|POSTAL|GEO|CITY|STATE|COUNTY|STREET|ZIP|BUILDING|ADDRESS/.test(ty)) return 'location';
+  if (/ORGANIZATION|COMPANY/.test(ty)) return 'org';
+  if (/IDENTIFIER|DOCUMENT|DEVICE|VEHICLE|VIN|VRM|SSN|ACCOUNTNUMBER|BANK_ACCOUNT|ROUTING|PIN|PASSWORD|MASKEDNUMBER|IMEI|TAX_ID|PASSPORT|DRIVERS_LICENSE/.test(ty)) return 'id';
+  if (/BANK|PAYMENT|FINANCIAL|IBAN|CREDIT_?CARD|AMOUNT|CURRENCY|BIC/.test(ty)) return 'finance';
+  if (/^DATE|^DOB$/.test(ty)) return 'date';
+  if (/IP|LINK|MAC$|URL|USERAGENT|COINADDRESS/.test(ty)) return 'net';
+  if (/HEALTH|BIOMETRIC|ETHNIC|RELIGION|POLITICAL|SEXUAL|TRADE_UNION|CRIMINAL|AUTH_SECRET/.test(ty)) return 'health';
+  return 'other';
+};
+const CAT_COLOR = { person:'var(--person)', contact:'var(--contact)', location:'var(--location)', org:'var(--org)', id:'var(--id)', finance:'var(--finance)', date:'var(--date)', net:'var(--net)', health:'var(--health)', other:'var(--other)' };
+const CAT_DE = { person:'Person', contact:'Kontakt', location:'Ort', org:'Organisation', id:'Kenner', finance:'Finanzen', date:'Datum', net:'Netz', health:'Gesundheit', other:'Sonstiges' };
+
+let ID2L = null;
+
+const REGEX_RULES = [
+  ['DATE', /\b\d{1,2}\.\s?(?:Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember|Jan|Feb|Mrz|Apr|Jun|Jul|Aug|Sep|Okt|Nov|Dez)\.?\s?\d{2,4}\b/g],
+  ['DATE', /\b\d{1,2}\.\d{1,2}\.\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b/g],
+  ['EMAIL_ADDRESS', /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g],
+  ['PHONE_NUMBER', /(?:\+\d{2}[\s\-\/()]?)?(?:0|\(0\))[\d\s\-\/()]{7,15}\d/g],
+  ['IBAN', /\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}(?:\s?[A-Z0-9]{1,3})?\b/g],
+  ['VEHICLE_IDENTIFIER', /\b[A-ZÄÖÜ]{1,3}-[A-ZÄÖÜ]{1,2}\s?\d{1,4}\b/g],
+  ['DOCUMENT_REFERENCE', /\b[A-ZÄÖÜ]{2,10}-\d{4}-\d{3,10}\b/g],
+  ['PERSON_IDENTIFIER', /\b[A-Z]\d{9,11}\b/g],
+  ['IP_ADDRESS', /\b(?:\d{1,3}\.){3}\d{1,3}\b/g],
+];
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+function fnv1a(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h >>> 0;
+}
+const pick = (pool, key) => pool[fnv1a(key) % pool.length];
+
+const MONTHS_DE = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
+function shiftDate(str, days) {
+  let m;
+  if ((m = str.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/))) {
+    const d = new Date(+m[3], +m[2] - 1, +m[1]); d.setDate(d.getDate() + days);
+    return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;
+  }
+  if ((m = str.match(/^(\d{1,2})\.\s?([A-Za-zäöü]+)\.?\s+(\d{4})$/))) {
+    const mi = MONTHS_DE.findIndex((x) => x.toLowerCase().startsWith(m[2].toLowerCase().slice(0, 3)));
+    if (mi < 0) return null;
+    const d = new Date(+m[3], mi, +m[1]); d.setDate(d.getDate() + days);
+    return `${d.getDate()}. ${MONTHS_DE[d.getMonth()]} ${d.getFullYear()}`;
+  }
+  if ((m = str.match(/^(\d{4})-(\d{2})-(\d{2})$/))) {
+    const d = new Date(+m[1], +m[2] - 1, +m[3]); d.setDate(d.getDate() + days);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+  return null;
+}
+
+const SURROGATE_POOLS = {
+  PERSON_NAME: ['Lukas Hartmann','Miriam Schönpflug','Jonas Wiedenfeld','Katharina Blümel','Sebastian Falkner','Anna Reinhardt','Moritz Steubing','Clara Vogelsang'],
+  ORGANIZATION_NAME: ['Städtisches Klinikum Ost','Marien Hospital Westend','Ambulanzzentrum Rheinblick','Praxiszentrum Am Park','Gesundheitszentrum Elbtal'],
+  LOCATION: ['Ahornweg 17, 53115 Bonn','Birkenstraße 4, 04109 Leipzig','Hafenpromenade 22, 20359 Hamburg','Lindenallee 9, 70173 Stuttgart'],
+  CITY: ['Bonn','Leipzig','Hamburg','Stuttgart','Dresden'],
+};
+const slugName = (name) => name.toLowerCase().replace(/[^a-z ]/g,'').split(/\s+/).join('.') + (fnv1a(name) % 80 + 11);
+
+const CANON = {
+  FIRSTNAME: 'PERSON_NAME', LASTNAME: 'PERSON_NAME', MIDDLENAME: 'PERSON_NAME',
+  PREFIX: 'PERSON_ROLE_OR_TITLE', JOBTITLE: 'PERSON_ROLE_OR_TITLE',
+  DOB: 'DATE_OF_BIRTH', DATE: 'DATE',
+  EMAIL: 'EMAIL_ADDRESS', PHONENUMBER: 'PHONE_NUMBER',
+  COMPANYNAME: 'ORGANIZATION_NAME',
+  CITY: 'LOCATION', STATE: 'LOCATION', COUNTY: 'LOCATION', ZIPCODE: 'LOCATION',
+  STREET: 'POSTAL_ADDRESS', SECONDARYADDRESS: 'POSTAL_ADDRESS', BUILDINGNUMBER: 'POSTAL_ADDRESS',
+  VEHICLEVRM: 'VEHICLE_IDENTIFIER', VEHICLEVIN: 'VEHICLE_IDENTIFIER',
+  IBAN: 'IBAN', CREDITCARDNUMBER: 'PAYMENT_CARD',
+  ACCOUNTNUMBER: 'PERSON_IDENTIFIER', ACCOUNTNAME: 'USERNAME',
+  SSN: 'PERSON_IDENTIFIER', PIN: 'AUTH_SECRET', PASSWORD: 'AUTH_SECRET',
+  IPV4: 'IP_ADDRESS', IPV6: 'IP_ADDRESS', IP: 'IP_ADDRESS',
+  PHONEIMEI: 'DOCUMENT_IDENTIFIER', MASKEDNUMBER: 'PERSON_IDENTIFIER',
+  GIVEN_NAME: 'PERSON_NAME', SURNAME: 'PERSON_NAME',
+  PHONE: 'PHONE_NUMBER',
+  TAX_ID: 'DOCUMENT_IDENTIFIER', GOVERNMENT_ID: 'DOCUMENT_IDENTIFIER',
+  PASSPORT: 'DOCUMENT_IDENTIFIER', DRIVERS_LICENSE: 'DOCUMENT_IDENTIFIER',
+  BANK_ACCOUNT: 'IBAN', ROUTING_NUMBER: 'PERSON_IDENTIFIER', SSN: 'PERSON_IDENTIFIER',
+  CREDIT_CARD: 'PAYMENT_CARD',
+  BUILDING_NUMBER: 'POSTAL_ADDRESS', STREET_NAME: 'POSTAL_ADDRESS', SECONDARY_ADDRESS: 'POSTAL_ADDRESS',
+  CITY: 'LOCATION', STATE: 'LOCATION', ZIP_CODE: 'LOCATION',
+  private_person: 'PERSON_NAME', private_email: 'EMAIL_ADDRESS', private_phone: 'PHONE_NUMBER',
+  private_address: 'POSTAL_ADDRESS', private_date: 'DATE', private_url: 'URL',
+  account_number: 'BANK_ACCOUNT_IDENTIFIER', secret: 'AUTH_SECRET',
+};
+const canonType = (ty) => CANON[ty] || ty;
+
+function snapEdges(text, spans) {
+  return spans.map((sp) => {
+    let s = sp.s, e = sp.e;
+    while (s > 0 && /\p{L}/u.test(text[s - 1])) s--;
+    while (e < text.length && /[\p{L}\p{N}_]/u.test(text[e])) e++;
+    while (e > s && /[,;:!?]/.test(text[e - 1])) e--;
+    return { ...sp, s, e };
+  }).sort((a, b) => a.s - b.s);
+}
+
+function mergeAddressParts(spans, text) {
+  const PARTS = /^(POSTAL_ADDRESS|LOCATION|STREET|SECONDARYADDRESS|BUILDINGNUMBER|ZIPCODE|CITY|STATE|COUNTY|GEO_LOCATION)$/;
+  const out = [];
+  for (const sp of spans) {
+    const last = out[out.length - 1];
+    const gap = last ? text.slice(last.e, sp.s) : '';
+    if (PARTS.test(sp.type) && last && PARTS.test(last.type) && sp.s - last.e <= 4 && !/[.;:!?]/.test(gap)) {
+      last.e = Math.max(last.e, sp.e);
+      last.conf.push(...sp.conf);
+      last.type = 'POSTAL_ADDRESS';
+    } else {
+      out.push({ ...sp });
+    }
+  }
+  return out;
+}
+
+const MODELS = {
+  bardsai: {
+    label: 'EU-Multilingual · bardsai (36 Klassen)',
+    dir: 'bardsai/eu-pii-anonimization-multilang',
+    dtype: 'q8',
+    maxLen: 480,
+  },
+  shield: {
+    label: 'Shield-82M · LH-Tech (56 Klassen)',
+    dir: 'onnx-community/Shield-82M-ONNX',
+    dtype: 'q8',
+    personMerge: true,
+    maxLen: 480,
+  },
+  rampart: {
+    label: 'Rampart · NDS (17 Klassen, 14.7 MB)',
+    dir: 'nationaldesignstudio/rampart',
+    kind: 'rampart',
+  },
+  openai: {
+    label: 'OpenAI Privacy Filter · 8 Klassen · 131k Kontext · 917 MB',
+    dir: 'openai/privacy-filter',
+    dtype: 'q4',
+    maxLen: 8192,
+    webgpuOnly: true,
+  },
+};
+const MODEL_META = {
+  bardsai: { repo: 'bardsai/eu-pii-anonimization-multilang', classes: '36 GDPR-Klassen · 24 Sprachen' },
+  shield: { repo: 'LH-Tech-AI/Shield-82M', classes: '56 PII-Klassen · multilingual' },
+  rampart: { repo: 'nationaldesignstudio/rampart', classes: '17 Klassen · 7 Sprachen · 14.7 MB' },
+  openai: { repo: 'openai/privacy-filter', classes: '8 Klassen · 131k Kontext · 50M aktiv' },
+};
+function updateModelBadges(key) {
+  const meta = MODEL_META[key] || {};
+  document.getElementById('modelBadge').textContent = meta.repo || key;
+  document.getElementById('classesBadge').textContent = meta.classes || '';
+}
+
+const loadedModels = {};
+let activeModelKey = 'bardsai';
+
+async function loadModel(key, onProgress) {
+  if (loadedModels[key]) return loadedModels[key];
+  const def = MODELS[key];
+  if (def.webgpuOnly && activeDevice !== 'webgpu') {
+    throw new Error('Dieses Modell benötigt WebGPU (917 MB Q4-MoE). Bitte in einem Chromium-basierten Browser mit WebGPU öffnen.');
+  }
+  if (def.kind === 'rampart') {
+    const classifier = await loadNerClassifier({
+      model: def.dir,
+      device: activeDevice === 'webgpu' ? 'webgpu' : 'wasm',
+    });
+    loadedModels[key] = { kind: 'rampart', classifier };
+    return loadedModels[key];
+  }
+  const tok = await AutoTokenizer.from_pretrained(def.dir);
+  const mdl = await AutoModelForTokenClassification.from_pretrained(def.dir, {
+    device: activeDevice, dtype: def.dtype || 'q8', progress_callback: onProgress,
+  });
+  const id2l = mdl.config.id2label;
+  loadedModels[key] = { tok, mdl, id2l };
+  return loadedModels[key];
+}
+
+function mergePersonParts(spans, text) {
+  const PARTS = /^(FIRSTNAME|LASTNAME|MIDDLENAME|PREFIX)$/;
+  const out = [];
+  for (const sp of spans) {
+    const last = out[out.length - 1];
+    const gapOk = last && sp.s - last.e <= 2 && !/[,.:;"!?]/.test(text.slice(last.e, sp.s));
+    if (PARTS.test(sp.type) && last && (last._pj || PARTS.test(last.type)) && gapOk) {
+      last.e = Math.max(last.e, sp.e);
+      last.conf.push(...sp.conf);
+      last.type = 'PERSON_NAME';
+      last._pj = true;
+    } else if (PARTS.test(sp.type)) {
+      out.push({ ...sp, type: 'PERSON_NAME', _pj: true });
+    } else {
+      out.push({ ...sp });
+    }
+  }
+  return out;
+}
+
+function surrogateFor(type, original, personMap) {
+  type = canonType(type);
+  const key = type + '\u0000' + original;
+  const h = fnv1a(key);
+  switch (type) {
+    case 'PERSON_NAME': return pick(SURROGATE_POOLS.PERSON_NAME, key);
+    case 'PERSON_ROLE_OR_TITLE': return original;
+    case 'ORGANIZATION_NAME': return pick(SURROGATE_POOLS.ORGANIZATION_NAME, key);
+    case 'LOCATION': {
+      if (/stra(ss|ß)e|str\.|weg|allee|platz|gasse|promenade/i.test(original)) return pick(SURROGATE_POOLS.LOCATION, key);
+      if (/\d/.test(original)) return pick(SURROGATE_POOLS.LOCATION, key);
+      return pick(SURROGATE_POOLS.CITY, key);
+    }
+    case 'POSTAL_ADDRESS': case 'GEO_LOCATION': return pick(SURROGATE_POOLS.LOCATION, key);
+    case 'DATE_OF_BIRTH': case 'DATE': {
+      const shifted = shiftDate(original.trim(), 97 + (h % 1500));
+      return shifted || '01.01.' + (1900 + (h % 60));
+    }
+    case 'PHONE_NUMBER': return `+49 ${(h % 15 + 151).toString()} ${String(h % 9000000 + 1000000).slice(0,7)}`;
+    case 'EMAIL_ADDRESS': {
+      const base = personMap ? slugName(personMap) : pick(['anonym.postfach','redaktion.datenschutz','service.kontakt'], key);
+      const doms = ['posteo.de','web.example','mail.anonym'];
+      return `${base}@${pick(doms, key)}`;
+    }
+    case 'IBAN': case 'BANK_ACCOUNT_IDENTIFIER': {
+      const digits = Array.from({length: 18}, (_, i) => (fnv1a(key + i) % 10)).join('');
+      return `DE${digits.slice(0,2)} ${digits.slice(2,6)} ${digits.slice(6,10)} ${digits.slice(10,14)} ${digits.slice(14,18)}`;
+    }
+    case 'PERSON_IDENTIFIER': return String.fromCharCode(65 + h % 26) + String(h % 900000000 + 100000000);
+    case 'PAYMENT_CARD': {
+      const d = Array.from({ length: 16 }, (_, i) => fnv1a(key + i) % 10);
+      return `${d.slice(0, 4).join('')} ${d.slice(4, 8).join('')} ${d.slice(8, 12).join('')} ${d.slice(12).join('')}`;
+    }
+    case 'DOCUMENT_IDENTIFIER': case 'DOCUMENT_REFERENCE': {
+      const scrambled = original.replace(/\d/g, (d) => String(fnv1a(key + d) % 10));
+      return scrambled === original ? `[${type}]` : scrambled;
+    }
+    case 'VEHICLE_IDENTIFIER': {
+      const L = 'ABCDEFGHJKLMNPRSTUVWXYZ';
+      return `${L[h % L.length]}-${L[fnv1a(key+'a') % L.length]}${L[fnv1a(key+'b') % L.length]} ${String(h % 9000 + 100)}`;
+    }
+    default:
+      return `[${type}]`;
+  }
+}
+
+function alignOffsets(text, pieces) {
+  let ptr = 0;
+  const out = [];
+  for (const p of pieces) {
+    if (!p) { out.push(null); continue; }
+    let lead = 0;
+    while (lead < p.length && /\s/.test(p[lead])) lead++;
+    if (lead > 0) while (ptr < text.length && /\s/.test(text[ptr])) ptr++;
+    const core = p.slice(lead);
+    if (!core) { out.push(null); continue; }
+    if (text.startsWith(core, ptr)) {
+      out.push([ptr, ptr + core.length]);
+      ptr += core.length;
+    } else {
+      let s = ptr;
+      while (s < text.length && /\s/.test(text[s])) s++;
+      const e = Math.min(text.length, s + core.length);
+      out.push([s, e]);
+      ptr = e;
+    }
+  }
+  return out;
+}
+
+async function runRegex(text, enabled) {
+  if (!enabled) return [];
+  const found = [];
+  for (const [type, re] of REGEX_RULES) {
+    re.lastIndex = 0;
+    for (let m; (m = re.exec(text)); ) {
+      const raw = m[0];
+      if (!raw.trim()) continue;
+      if (/^(0\d{1,2}|19|20)\d{0,2}$/.test(raw.replace(/\D/g,'')) && type !== 'DATE' && type !== 'IP_ADDRESS' && type !== 'PHONE_NUMBER') continue;
+      found.push({ type, s: m.index, e: m.index + raw.length, conf: [0.99], src: 're' });
+    }
+  }
+  return found;
+}
+
+function decodeSpans(labels, offs, minConf) {
+  const found = [];
+  let cur = null;
+  for (let i = 0; i < labels.length; i++) {
+    const off = offs[i];
+    if (!off || off[1] <= off[0]) continue;
+    const ty = labels[i].t === 'O' ? null : labels[i].t.replace(/^[BIES]-/, '');
+    if (ty && cur && cur.type === ty && off[0] <= cur.e + 1) {
+      cur.e = off[1];
+      cur.conf.push(labels[i].c);
+    } else {
+      if (cur && cur.e - cur.s >= 1) found.push(cur);
+      cur = ty ? { type: ty, s: off[0], e: off[1], conf: [labels[i].c], src: 'model' } : null;
+    }
+  }
+  if (cur) found.push(cur);
+  return found.filter((f) => Math.min(...f.conf) >= minConf || (f.conf.reduce((a,b)=>a+b,0)/f.conf.length) >= minConf);
+}
+
+function mergeSpans(modelSpans, regexSpans) {
+  const all = [...modelSpans.map((x) => ({ ...x })), ...regexSpans.map((x) => ({ ...x }))];
+  all.sort((a, b) => a.s - b.s || (b.e - b.s) - (a.e - a.s));
+  const kept = [];
+  const STRUCTURED_RE = /^(VEHICLE_IDENTIFIER|IP_ADDRESS|IBAN)$/;
+  const SENSELESS_FOR_STRUCTURED = /^(BIOMETRIC|HEALTH|PERSON_ATTRIBUTE|CRIMINAL|RELIGION|POLITICAL|SEXUAL|TRADE_UNION|ETHNIC)/;
+  const prio = (s) => {
+    if (s.src === 're') return STRUCTURED_RE.test(s.type) ? 3 : 1;
+    return SENSELESS_FOR_STRUCTURED.test(s.type) ? 0.5 : 2;
+  };
+  for (const sp of all) {
+    const target = kept.find((k) => sp.s < k.e && k.s < sp.e);
+    if (!target) { kept.push(sp); continue; }
+    if (prio(sp) > prio(target)) {
+      target.type = sp.type;
+      target.conf = sp.conf;
+      target.src = sp.src;
+      target.s = Math.min(target.s, sp.s);
+      target.e = Math.max(target.e, sp.e);
+    } else if (sp.src === 're' && target.src === 're' && sp.type === target.type) {
+      target.e = Math.max(target.e, sp.e);
+    }
+  }
+  kept.sort((a, b) => a.s - b.s);
+  return kept.filter((sp, i) => i === 0 || sp.s >= kept[i - 1].e);
+}
+
+let tokenizer = null, model = null, runId = 0, lastText = '';
+let currentSpans = [], currentText = '', surrogateMap = new Map();
+let activeDevice = 'wasm';
+
+function buildSurrogates(text, spans) {
+  surrogateMap = new Map();
+  const personByPos = new Map();
+  for (const sp of spans) if (sp.type === 'PERSON_NAME') personByPos.set(sp.s, text.slice(sp.s, sp.e));
+  for (const sp of spans) {
+    const orig = text.slice(sp.s, sp.e);
+    if (sp.type === 'PERSON_ROLE_OR_TITLE') { surrogateMap.set(sp, orig); continue; }
+    let personRef = null;
+    for (const [ps, pname] of personByPos) {
+      if (Math.abs(ps - sp.s) < 90) { personRef = pname; break; }
+    }
+    const val = surrogateFor(sp.type, orig, personRef);
+    surrogateMap.set(sp, val);
+  }
+}
+
+function render(text, spans) {
+  currentText = text; currentSpans = spans;
+  const mode = document.getElementById('optMode').value;
+  const reveal = document.getElementById('optReveal').checked;
+  const outEl = document.getElementById('output');
+  let html = '';
+  let pos = 0;
+  for (const sp of spans) {
+    html += escapeHtml(text.slice(pos, sp.s));
+    const cat = CAT(sp.type);
+    const orig = text.slice(sp.s, sp.e);
+    const conf = Math.round(100 * (sp.conf.reduce((a,b)=>a+b,0)/sp.conf.length));
+    let shown, cls = 'red';
+    if (mode === 'pseudo') {
+      shown = surrogateMap.get(sp) || `[${sp.type}]`;
+      cls = 'pseudo';
+    } else if (mode === 'bracket') {
+      shown = `[${sp.type}]`;
+    } else if (mode === 'label') {
+      shown = 'private_' + sp.type.toLowerCase();
+    } else {
+      shown = '█'.repeat(Math.max(6, Math.min(orig.length, 18)));
+    }
+    html += `<mark class="${cls}${reveal && mode !== 'pseudo' ? ' reveal' : ''}" style="--cat:${CAT_COLOR[cat]}" title="${escapeHtml(orig)} · ${sp.type}${sp.src==='re'?' · Regex':' · '+conf+'%'}">${escapeHtml(shown)}</mark>`;
+    pos = sp.e;
+  }
+  html += escapeHtml(text.slice(pos));
+  outEl.innerHTML = html;
+
+  const listEl = document.getElementById('entities');
+  listEl.innerHTML = spans.map((sp) => {
+    const cat = CAT(sp.type);
+    const conf = Math.round(100 * (sp.conf.reduce((a,b)=>a+b,0)/sp.conf.length));
+    const pseudo = surrogateMap.get(sp);
+    return `<span class="ent" style="--cat:${CAT_COLOR[cat]}"><i></i>${sp.type}<small>${escapeHtml(text.slice(sp.s, sp.e).slice(0,42))}</small>${mode==='pseudo' && pseudo ? `<small>→ ${escapeHtml(pseudo)}</small>` : `<small>${sp.src === 're' ? 'regex' : conf + '%'}</small>`}</span>`;
+  }).join('');
+
+  document.getElementById('stEnt').textContent = spans.length;
+}
+
+async function anonymize() {
+  const text = document.getElementById('input').value;
+  const active = loadedModels[activeModelKey];
+  if (!active || text === lastText) return;
+  lastText = text;
+  const myRun = ++runId;
+  const t0 = performance.now();
+  const minConf = parseInt(document.getElementById('optConf').value, 10) / 100;
+
+  let merged, tokCount = null;
+
+  if (active.kind === 'rampart') {
+    const heuristic = detectHeuristics(text);
+    const map = premask(text, heuristic);
+    const maskedSpans = await detectNer(map.masked, active.classifier, Math.min(minConf, 0.4));
+    if (myRun !== runId) return;
+    const contextual = [];
+    for (const span of maskedSpans) {
+      const p = projectMaskedSpan(span, text, map);
+      if (p !== null) contextual.push(p);
+    }
+    const extra = [];
+    for (const [type, re] of REGEX_RULES) {
+      if (!/^(IBAN|VEHICLE_IDENTIFIER|DOCUMENT_REFERENCE)$/.test(type)) continue;
+      re.lastIndex = 0;
+      for (let m; (m = re.exec(text)); ) {
+        extra.push({ label: type, start: m.index, end: m.index + m[0].length, score: 0.99, source: 'heuristic', text: m[0] });
+      }
+    }
+    const keepLabels = document.getElementById('optKeepGeo').checked ? new Set(['CITY', 'STATE', 'ZIP_CODE']) : new Set();
+    const policySpans = applyPolicy([...heuristic, ...contextual, ...extra], keepLabels).reverse();
+    merged = policySpans.map((sp) => ({ type: sp.label, s: sp.start, e: sp.end, conf: [sp.score], src: sp.source === 'heuristic' ? 're' : 'model' }));
+  } else {
+      const enc = await active.tok(text, { truncation: true, max_length: MODELS[activeModelKey].maxLen });
+      const pieces = enc.input_ids.tolist().flat().map((id) => active.tok.decode([Number(id)]));
+    const offs = alignOffsets(text, pieces);
+      const out = await active.mdl(enc);
+      const dims = out.logits.dims;
+    const data = out.logits.data;
+    const S = dims[1], C = dims[2];
+    tokCount = S;
+    const labels = [];
+    for (let i = 0; i < S; i++) {
+      let best = -Infinity, bi = 0;
+      for (let c = 0; c < C; c++) { const v = data[i * C + c]; if (v > best) { best = v; bi = c; } }
+      let sum = 0;
+      for (let c = 0; c < C; c++) sum += Math.exp(data[i * C + c] - best);
+      labels.push({ t: active.id2l[String(bi)], c: 1 / sum });
+    }
+    if (myRun !== runId) return;
+
+    let modelSpans = decodeSpans(labels, offs, minConf);
+      if (MODELS[activeModelKey].personMerge) {
+      modelSpans = mergePersonParts(modelSpans, text);
+      modelSpans = mergeAddressParts(modelSpans, text);
+    }
+    modelSpans = snapEdges(text, modelSpans);
+      const regexSpans = await runRegex(text, document.getElementById('optRegex').checked);
+      merged = mergeSpans(modelSpans, regexSpans);
+    }
+
+  buildSurrogates(text, merged);
+
+  const dt = Math.round(performance.now() - t0);
+  document.getElementById('stLat').textContent = dt + ' ms';
+  document.getElementById('stTok').textContent = tokCount ?? '–';
+  document.getElementById('outMeta').textContent = `${merged.length} Entitäten · ${dt} ms · ${MODELS[activeModelKey].label.split('·')[0].trim()}`;
+  render(text, merged);
+}
+
+let debounceTimer = null;
+document.getElementById('input').addEventListener('input', () => {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(anonymize, 280);
+});
+for (const id of ['optRegex', 'optMode', 'optReveal', 'optKeepGeo']) {
+  document.getElementById(id).addEventListener('change', () => { lastText = ''; anonymize(); });
+}
+document.getElementById('optConf').addEventListener('input', (e) => {
+  document.getElementById('confVal').textContent = (parseInt(e.target.value, 10) / 100).toFixed(2);
+});
+document.getElementById('optConf').addEventListener('change', () => { lastText = ''; anonymize(); });
+document.getElementById('btnReset').addEventListener('click', () => {
+  const el = document.getElementById('input');
+  el.value = PRESETS[document.getElementById('optPreset').value] || PRESETS.neuro;
+  lastText = '';
+  anonymize();
+});
+document.getElementById('optPreset').addEventListener('change', () => {
+  const el = document.getElementById('input');
+  el.value = PRESETS[document.getElementById('optPreset').value] || PRESETS.neuro;
+  lastText = '';
+  anonymize();
+});
+
+function plainOutput() {
+  let out = '', pos = 0;
+  const mode = document.getElementById('optMode').value;
+  for (const sp of currentSpans) {
+    out += currentText.slice(pos, sp.s);
+    if (mode === 'pseudo') out += surrogateMap.get(sp) || `[${sp.type}]`;
+    else if (mode === 'bracket' || mode === 'block') out += `[${sp.type}]`;
+    else out += 'private_' + sp.type.toLowerCase();
+    pos = sp.e;
+  }
+  return out + currentText.slice(pos);
+}
+document.getElementById('btnCopy').addEventListener('click', async (e) => {
+  try { await navigator.clipboard.writeText(plainOutput()); e.target.textContent = 'Kopiert ✓'; setTimeout(() => e.target.textContent = 'Kopieren', 1200); }
+  catch { e.target.textContent = 'Fehler'; }
+});
+document.getElementById('btnTxt').addEventListener('click', () => {
+  const blob = new Blob([plainOutput()], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'anonymisiert.txt'; a.click();
+  URL.revokeObjectURL(a.href);
+});
+document.getElementById('btnJson').addEventListener('click', () => {
+  const report = {
+    generated: new Date().toISOString(),
+    model: 'bardsai/eu-pii-anonimization-multilang (ONNX q8, transformers.js)',
+    backend: document.getElementById('backendBadge').textContent,
+    mode: document.getElementById('optMode').value,
+    entities: currentSpans.map((sp) => ({
+      type: sp.type,
+      category: CAT(sp.type),
+      start: sp.s, end: sp.e,
+      original: currentText.slice(sp.s, sp.e),
+      surrogate: surrogateMap.get(sp) || null,
+      source: sp.src,
+      confidence: +(sp.conf.reduce((a,b)=>a+b,0)/sp.conf.length).toFixed(3),
+    })),
+    anonymized_text: plainOutput(),
+  };
+  const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'anonymisierung-report.json'; a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+const legendEl = document.getElementById('legend');
+legendEl.innerHTML = Object.entries(CAT_COLOR).map(([k, v]) => `<span style="--cat:${v}">${CAT_DE[k]}</span>`).join('');
+
+const overlay = document.getElementById('overlay');
+const fill = document.getElementById('loadFill');
+const pctEl = document.getElementById('loadPct');
+const fileEl = document.getElementById('loadFile');
+
+function progressCb(p) {
+  if (p.status === 'progress' && p.total) {
+    const pct = Math.round(100 * p.loaded / p.total);
+    fill.style.width = pct + '%';
+    pctEl.textContent = pct + '%';
+    fileEl.textContent = `${p.file} · ${(p.loaded / 1e6).toFixed(0)} / ${(p.total / 1e6).toFixed(0)} MB`;
+  } else if (p.status === 'done' && p.file?.includes('onnx')) {
+    fileEl.textContent = p.file + ' ✓';
+  } else if (p.status === 'ready') {
+    fill.style.width = '100%'; pctEl.textContent = '100%';
+  }
+}
+
+(async function init() {
+  const urlModel = new URLSearchParams(location.search).get('model');
+  if (urlModel && MODELS[urlModel]) {
+    activeModelKey = urlModel;
+    document.getElementById('optModel').value = urlModel;
+  }
+  updateModelBadges(activeModelKey);
+  document.getElementById('input').value = PRESETS.neuro;
+
+  try {
+    let device = 'wasm', backendLabel = 'WASM (CPU)';
+    const gpuAvailable = typeof navigator !== 'undefined' && !!navigator.gpu;
+    let gpuUsable = false;
+    if (gpuAvailable) {
+      try { gpuUsable = !!(await navigator.gpu.requestAdapter()); } catch { gpuUsable = false; }
+    }
+    document.getElementById('gpuBadge').textContent = gpuUsable ? 'WebGPU verfügbar' : 'kein WebGPU → CPU-Fallback';
+    if (gpuUsable) {
+      try {
+        activeDevice = 'webgpu';
+        const m = await loadModel(activeModelKey, progressCb);
+        tokenizer = m.tok; model = m.mdl; ID2L = m.id2l;
+        device = 'webgpu'; backendLabel = 'WebGPU';
+      } catch (err) {
+        console.warn('WebGPU load failed, falling back to WASM:', err);
+        delete loadedModels[activeModelKey];
+        activeDevice = 'wasm';
+      }
+    }
+    if (!loadedModels[activeModelKey]) {
+      activeDevice = 'wasm';
+      const m = await loadModel(activeModelKey, progressCb);
+      tokenizer = m.tok; model = m.mdl; ID2L = m.id2l;
+    }
+    const badge = document.getElementById('backendBadge');
+    badge.textContent = backendLabel;
+    badge.classList.add(device === 'webgpu' ? 'ok' : 'warn');
+
+    fill.style.width = '100%'; pctEl.textContent = 'fertig';
+    setTimeout(() => overlay.classList.add('hidden'), 350);
+    lastText = '';
+    anonymize();
+  } catch (err) {
+    console.error(err);
+    fileEl.textContent = 'Fehler: ' + (err?.message || err);
+    pctEl.textContent = '✗';
+  }
+})();
+
+document.getElementById('optModel').addEventListener('change', async (e) => {
+  const key = e.target.value;
+  if (key === activeModelKey) return;
+  runId++;
+  overlay.classList.remove('hidden');
+  fileEl.textContent = MODELS[key].label + ' wird geladen …';
+  fill.style.width = '10%'; pctEl.textContent = '…';
+  try {
+    const m = await loadModel(key, progressCb);
+    activeModelKey = key;
+    tokenizer = m.tok; model = m.mdl; ID2L = m.id2l;
+    updateModelBadges(key);
+    lastText = '';
+    fill.style.width = '100%'; pctEl.textContent = 'fertig';
+    setTimeout(() => overlay.classList.add('hidden'), 250);
+    anonymize();
+  } catch (err) {
+    console.error(err);
+    fileEl.textContent = 'Fehler: ' + (err?.message || err);
+    pctEl.textContent = '✗';
+    e.target.value = activeModelKey;
+  }
+});
+</script>
+</body>
+</html>
