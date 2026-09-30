@@ -41,8 +41,8 @@ test('worker client delivers progress, rejects failures, and cancels pending wor
 
 test('worker uses version-matched GPU/CPU assets, passes progress to Rampart and serializes inference', async () => {
   const source = (await readFile(new URL('../runtime-worker.js', import.meta.url), 'utf8'))
-    .replace(/^import[\s\S]*?from 'https:[^']+';\n/, '')
-    .replace(/^import[^\n]+from '\.\/rampart\/index.js';\n/, '');
+    .replace(/^import[^\n]+from '\.\/rampart\/index.js';\n/, '')
+    .replace(/import\('https:[^']+'\)/, 'importTransformers()');
   for (const device of ['webgpu', 'wasm']) {
     const messages = [];
     let options;
@@ -50,6 +50,7 @@ test('worker uses version-matched GPU/CPU assets, passes progress to Rampart and
     const env = { backends: { onnx: { versions: { web: 'test-version' }, wasm: {} } } };
     const context = vm.createContext({
       env, pipeline: () => {},
+      importTransformers: async () => ({ env, pipeline: context.pipeline }),
       self: { postMessage: m => messages.push(m) },
       loadNerClassifier: async o => { options = o; o.progress_callback({ status: 'ready' }); return () => {}; },
       detectNer: async text => {
@@ -190,4 +191,28 @@ test('inference failures show recovery and leave the text retryable', async () =
   await app.element('btnRetry').listeners.get('click')();
   assert.equal(app.element('loadRecovery').hidden, true);
   assert.equal(app.element('overlay').classList.values.has('hidden'), true);
+});
+
+test('worker bootstrap uses the standalone browser bundle and reports import failures to the UI', async () => {
+  const original = await readFile(new URL('../runtime-worker.js', import.meta.url), 'utf8');
+  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  const dependencyURL = original.match(/await import\('([^']+)'\)/)?.[1];
+  assert.equal(dependencyURL, 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0/dist/transformers.min.js');
+  assert.equal(JSON.parse(html.split('<script type="importmap">')[1].split('</script>')[0]).imports['@huggingface/transformers'], dependencyURL);
+  // There must be no static CDN import that can fail before onmessage exists.
+  assert.doesNotMatch(original, /^import[\s\S]*?from ['"]https:/m);
+  const messages = [];
+  const source = original
+    .replace(/^import[^\n]+from '\.\/rampart\/index.js';\n/, '')
+    .replace(/import\('https:[^']+'\)/, 'importTransformers()');
+  const context = vm.createContext({
+    self: { postMessage: message => messages.push(message) },
+    importTransformers: async () => { throw new TypeError('Failed to fetch dynamically imported module'); },
+  });
+  vm.runInContext(source, context);
+  context.self.onmessage({ data: { id: 1, type: 'load', model: { kind: 'rampart' }, device: 'wasm' } });
+  await vm.runInContext('queue', context);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].id, 1);
+  assert.match(messages[0].error, /Modell-Bibliothek konnte nicht importiert werden: Failed to fetch/);
 });

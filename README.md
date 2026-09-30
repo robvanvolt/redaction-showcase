@@ -33,6 +33,10 @@ Die CPU-Inferenz kann länger dauern als auf einer Desktop-GPU.
 
 Modell und Inferenz laufen in einem eigenen Module-Web-Worker, damit die Oberfläche
 bedienbar bleibt. Beim Modellwechsel wird der vorige Worker samt Modell beendet.
+Der Worker importiert das vollständige `transformers.min.js`-Browser-Bundle:
+`transformers.web.js` enthält Paketimporte für Bundler, die ohne Import-Map im
+Worker nicht aufgelöst werden können. Der Import erfolgt im Ladehandler, damit
+auch CDN-/Importfehler mit ihrer Ursache in der Oberfläche erscheinen.
 WebGPU wird auf anderen Geräten versucht; schlägt das Laden eines CPU-fähigen
 Modells fehl, startet ein neuer Worker mit WASM. Ein fehlgeschlagener ONNX-Start
 kann dadurch die CPU-Runtime nicht blockieren. Ladefehler bieten Wiederholen und

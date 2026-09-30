@@ -1,15 +1,21 @@
-import {
-  AutoTokenizer, AutoModelForTokenClassification, pipeline, env,
-} from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0/dist/transformers.web.js';
 import { loadNerClassifier, detectNer } from './rampart/index.js';
-
-env.allowLocalModels = false;
-env.allowRemoteModels = true;
 
 let active;
 const progress_callback = (progress) => self.postMessage({ type: 'progress', progress });
 
 async function load({ model, device }) {
+  let transformers;
+  try {
+    // The .web.js build leaves bare ONNX imports for bundlers. Workers have no
+    // import map, so use the self-contained browser bundle instead. Import it
+    // inside the request handler so loading failures reach the UI with details.
+    transformers = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0/dist/transformers.min.js');
+  } catch (error) {
+    throw new Error('Modell-Bibliothek konnte nicht importiert werden: ' + (error?.message || String(error)));
+  }
+  const { AutoTokenizer, AutoModelForTokenClassification, pipeline, env } = transformers;
+  env.allowLocalModels = false;
+  env.allowRemoteModels = true;
   const ort = env.backends.onnx;
   const prefix = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ort.versions.web}/dist/`;
   // Safari's default plain WASM binary has no webgpuInit export. Use the

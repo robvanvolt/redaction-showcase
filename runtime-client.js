@@ -2,7 +2,8 @@
 // poison the runtime's internal promise chain, so changing `device` alone is
 // insufficient for a reliable fallback.
 export function createRuntime(onProgress) {
-  const worker = new Worker(new URL('./runtime-worker.js', import.meta.url), { type: 'module' });
+  const workerURL = new URL('./runtime-worker.js', import.meta.url);
+  const worker = new Worker(workerURL, { type: 'module' });
   const pending = new Map();
   let nextId = 0;
   let closed = false;
@@ -22,7 +23,9 @@ export function createRuntime(onProgress) {
     event.preventDefault();
     closed = true;
     worker.terminate();
-    rejectPending(new Error(event.message || 'Die Modell-Runtime konnte nicht geladen werden.'));
+    const detail = event.message || event.error?.message ||
+      `Worker-Datei konnte nicht gestartet werden: ${workerURL.href}`;
+    rejectPending(new Error(detail));
   };
   return {
     request(type, payload) {
