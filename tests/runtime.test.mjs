@@ -41,7 +41,7 @@ test('worker client delivers progress, rejects failures, and cancels pending wor
 
 test('worker uses version-matched GPU/CPU assets, passes progress to Rampart and serializes inference', async () => {
   const source = (await readFile(new URL('../runtime-worker.js', import.meta.url), 'utf8'))
-    .replace(/^import[^\n]+from '\.\/rampart\/index.js';\n/, '')
+    .replace(/^import[^\n]+from '\.\/(?:rampart\/index|offline-storage)\.js';\n/gm, '')
     .replace(/import\('https:[^']+'\)/, 'importTransformers()');
   for (const device of ['webgpu', 'wasm']) {
     const messages = [];
@@ -50,6 +50,7 @@ test('worker uses version-matched GPU/CPU assets, passes progress to Rampart and
     const env = { backends: { onnx: { versions: { web: 'test-version' }, wasm: {} } } };
     const context = vm.createContext({
       env, pipeline: () => {},
+      trackingCache: async () => ({ files: new Set(), match: async () => undefined, put: async () => {} }),
       navigator: { gpu: { requestAdapter: async () => ({}) } },
       importTransformers: async () => ({ env, pipeline: context.pipeline }),
       self: { postMessage: m => messages.push(m) },
@@ -96,6 +97,7 @@ async function appHarness({ nav, search = '', failLoad = () => false, failInfer 
   element('optRegex').checked = true;
   const attempts = [], runtimes = [];
   const context = vm.createContext({
+    setupPWA: () => ({ busy: false, offlineOnly: false, init: async () => {}, preferredKey: async key => key, modelLoaded: async () => {} }),
     ...rampart, isAppleMobile: () => isAppleMobile(nav), navigator: nav, location: { search }, URLSearchParams,
     performance, setTimeout, clearTimeout, console: { error() {}, warn() {} },
     document: { getElementById: element, querySelector: () => element('openaiOption') },
@@ -241,7 +243,7 @@ test('worker bootstrap uses the standalone browser bundle and reports import fai
   assert.doesNotMatch(original, /^import[\s\S]*?from ['"]https:/m);
   const messages = [];
   const source = original
-    .replace(/^import[^\n]+from '\.\/rampart\/index.js';\n/, '')
+    .replace(/^import[^\n]+from '\.\/(?:rampart\/index|offline-storage)\.js';\n/gm, '')
     .replace(/import\('https:[^']+'\)/, 'importTransformers()');
   const context = vm.createContext({
     self: { postMessage: message => messages.push(message) },
@@ -257,7 +259,7 @@ test('worker bootstrap uses the standalone browser bundle and reports import fai
 
 test('missing worker GPU fails before any library or model download', async () => {
   const source = (await readFile(new URL('../runtime-worker.js', import.meta.url), 'utf8'))
-    .replace(/^import[^\n]+from '\.\/rampart\/index.js';\n/, '')
+    .replace(/^import[^\n]+from '\.\/(?:rampart\/index|offline-storage)\.js';\n/gm, '')
     .replace(/import\('https:[^']+'\)/, 'importTransformers()');
   let imports = 0;
   const messages = [];

@@ -200,7 +200,8 @@ async function loadNerClassifier(options = {}) {
   const classifier = await pipeline("token-classification", model, {
     dtype: "q4",
     device: merged.device,
-    progress_callback: merged.progress_callback
+    progress_callback: merged.progress_callback,
+    local_files_only: merged.local_files_only ?? false
   });
   const adapter = (text, opts) => classifier(text, opts);
   const tokenizer = classifier.tokenizer;

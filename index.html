@@ -3,6 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0e1116">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="med redact">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
 <title>PII Redaction Showcase · Echtzeit-Anonymisierung im Browser</title>
 <style>
   :root {
@@ -57,7 +62,7 @@
   .badge.warn { color: #fbbf24; border-color: rgba(251,191,36,.35); }
   main {
     flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
-    padding: 18px 26px; min-height: 0;
+    padding: 18px 26px; min-height: 460px;
   }
   .pane-head { flex-wrap: wrap; gap: 8px; }
   .pane-head > span { flex-wrap: wrap; max-width: 100%; }
@@ -172,15 +177,25 @@
   @keyframes r { to { transform: rotate(360deg); } }
   .legend { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 8px 16px 12px; font-size: 11px; font-family: var(--mono); color: var(--muted); }
   .legend span::before { content: "● "; color: var(--cat); }
+  #pwaPanel { margin: 12px 26px 0; padding: 12px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); font-size: 13px; }
+  #pwaPanel summary { cursor: pointer; color: var(--accent); }
+  #pwaPanel p { line-height: 1.5; margin: 10px 0; }
+  #pwaPanel .pwa-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  #pwaMessage { overflow-wrap: anywhere; }
+  #pwaStorage, #pwaHelp { color: var(--muted); }
+  button:disabled { opacity: .5; cursor: default; }
   @media (max-width: 980px) {
-    main { grid-template-columns: 1fr; padding: 14px; gap: 14px; }
+    html, body { height: auto; min-height: 100%; }
+    main { flex: none; grid-template-columns: 1fr; padding: 14px; gap: 14px; }
     header { padding: 14px 16px 10px; }
     footer { padding: 8px 16px 14px; }
     section.pane { min-height: 340px; }
     #statusbar { position: static; justify-content: center; margin: 0 auto 12px; }
     .doc, #output { font-size: 16px; }
+    .doc, #output { min-height: 300px; }
     select, button { min-height: 44px; }
     input[type="range"] { width: 90px; }
+    #pwaPanel { margin: 10px 14px 0; }
   }
 </style>
 </head>
@@ -192,7 +207,22 @@
   <span class="badge" id="modelBadge">bardsai/eu-pii-anonimization-multilang</span>
   <span class="badge" id="classesBadge">36 GDPR-Klassen · DE nativ</span>
   <span class="badge" id="gpuBadge">WebGPU?</span>
+  <span class="badge" id="offlineBadge">Offline wird geprüft …</span>
 </header>
+
+<details id="pwaPanel">
+  <summary>App installieren &amp; Offline-Demo vorbereiten</summary>
+  <p id="pwaStatus" role="status" aria-live="polite">Offline-Speicher wird geprüft …</p>
+  <div class="pwa-actions">
+    <button id="btnInstall">Installationshilfe</button>
+    <button id="btnPrepareOffline" disabled>Alle verfügbaren Modelle offline speichern (bis ≈1.3 GB)</button>
+    <button id="btnVerifyOffline" disabled>Offline-Demo prüfen</button>
+  </div>
+  <p id="pwaModels"></p>
+  <p id="pwaMessage" role="status" aria-live="polite"></p>
+  <p id="pwaStorage"></p>
+  <p id="pwaHelp">iPad: In Safari „Teilen“ → „Zum Home-Bildschirm“. Danach die installierte App online öffnen, Modelle speichern und die Offline-Demo prüfen. Für die Vorführung im Flugmodus die App schließen und neu öffnen. Safari kann Website-Daten bei Speichermangel entfernen; daher vor der Vorführung testen. Es werden keine eingegebenen Texte gespeichert.</p>
+</details>
 
 <main>
   <section class="pane">
@@ -286,6 +316,7 @@
 </script>
 <script type="module">
 import { createRuntime, isAppleMobile } from './runtime-client.js';
+import { setupPWA } from './pwa.js';
 import {
   detectHeuristics, premask, projectMaskedSpan, applyPolicy,
 } from '@nationaldesignstudio/rampart';
@@ -502,7 +533,7 @@ let activeModelKey = 'bardsai';
 const appleMobile = isAppleMobile();
 let gpuUsable = false;
 
-async function loadModel(key, onProgress) {
+async function loadModel(key, onProgress, offlineOnly = false) {
   if (loadedModels[key]) return loadedModels[key];
   const def = MODELS[key];
   if (def.webgpuOnly && !gpuUsable) {
@@ -516,7 +547,7 @@ async function loadModel(key, onProgress) {
     if (def.webgpuOnly && device !== 'webgpu') break;
     const runtime = createRuntime(onProgress);
     try {
-      await runtime.request('load', { model: def, device });
+      await runtime.request('load', { model: def, device, offlineOnly });
       loadedModels[key] = { kind: def.kind, device, runtime };
       return loadedModels[key];
     } catch (error) {
@@ -742,7 +773,7 @@ function render(text, spans) {
 async function anonymize() {
   const text = document.getElementById('input').value;
   const active = loadedModels[activeModelKey];
-  if (!active || text === lastText) return;
+  if (!active || text === lastText) return !!active;
   lastText = text;
   const myRun = ++runId;
   const t0 = performance.now();
@@ -796,10 +827,12 @@ async function anonymize() {
     document.getElementById('stTok').textContent = tokCount ?? '–';
     document.getElementById('outMeta').textContent = `${merged.length} Entitäten · ${dt} ms · ${MODELS[activeModelKey].label.split('·')[0].trim()}`;
     render(text, merged);
+    return true;
   } catch (error) {
     if (myRun !== runId) return;
     lastText = '';
     showLoadError(error, activeModelKey);
+    return false;
   }
 }
 
@@ -896,6 +929,18 @@ function progressCb(p) {
 
 let loading = false;
 let attemptedModelKey = activeModelKey;
+const pwa = setupPWA({
+  models: MODELS,
+  usableKeys: () => ['rampart', 'bardsai', 'shield', ...(gpuUsable ? ['openai'] : [])],
+  activeKey: () => activeModelKey,
+  load: (key, offlineOnly) => selectModel(key, { offlineOnly }),
+  isLoading: () => loading,
+  onBusy: busy => {
+    document.getElementById('optModel').disabled = busy;
+    document.getElementById('btnRetry').disabled = busy;
+    document.getElementById('btnSmallModel').disabled = busy;
+  },
+});
 
 function showLoadError(error, key) {
   console.error(error);
@@ -906,8 +951,8 @@ function showLoadError(error, key) {
   document.getElementById('loadRecovery').hidden = false;
 }
 
-async function selectModel(key) {
-  if (loading) return;
+async function selectModel(key, { offlineOnly = pwa.offlineOnly } = {}) {
+  if (loading) return false;
   loading = true;
   attemptedModelKey = key;
   runId++;
@@ -934,7 +979,7 @@ async function selectModel(key) {
   document.getElementById('outMeta').textContent = '';
   for (const id of ['stLat', 'stEnt', 'stTok']) document.getElementById(id).textContent = '–';
   try {
-    const active = await loadModel(key, progressCb);
+    const active = await loadModel(key, progressCb, offlineOnly);
     activeModelKey = key;
     select.value = key;
     updateModelBadges(key);
@@ -945,12 +990,15 @@ async function selectModel(key) {
     fill.style.width = '100%'; pctEl.textContent = 'fertig';
     overlay.classList.add('hidden');
     lastText = '';
-    await anonymize();
+    if (!await anonymize()) return false;
+    await pwa.modelLoaded(key, active);
+    return true;
   } catch (error) {
     showLoadError(error, key);
     select.value = activeModelKey;
+    return false;
   } finally {
-    select.disabled = false;
+    select.disabled = pwa.busy;
     loading = false;
   }
 }
@@ -985,6 +1033,8 @@ async function selectModel(key) {
       document.getElementById('loadDescription').textContent =
         'Das angefragte OpenAI-Modell benötigt WebGPU und viel Arbeitsspeicher. Auf diesem Gerät wird stattdessen Rampart vollständig lokal geladen.';
     }
+    await pwa.init();
+    activeModelKey = await pwa.preferredKey(activeModelKey);
     document.getElementById('optModel').value = activeModelKey;
     updateModelBadges(activeModelKey);
     await selectModel(activeModelKey);
@@ -994,7 +1044,7 @@ async function selectModel(key) {
 })();
 
 document.getElementById('optModel').addEventListener('change', (event) => {
-  if (event.target.value !== activeModelKey) selectModel(event.target.value);
+  if (!pwa.busy && event.target.value !== activeModelKey) selectModel(event.target.value);
 });
 document.getElementById('btnRetry').addEventListener('click', () => selectModel(attemptedModelKey));
 document.getElementById('btnSmallModel').addEventListener('click', () => selectModel('rampart'));

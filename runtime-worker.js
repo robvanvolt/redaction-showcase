@@ -1,9 +1,11 @@
 import { loadNerClassifier, detectNer } from './rampart/index.js';
+import { trackingCache } from './offline-storage.js';
 
 let active;
+let savedFiles;
 const progress_callback = (progress) => self.postMessage({ type: 'progress', progress });
 
-async function load({ model, device }) {
+async function load({ model, device, offlineOnly = false }) {
   // Check the worker's GPU before fetching the library or model weights. GPU
   // availability on the page alone does not guarantee availability in a worker.
   if (device === 'webgpu') {
@@ -22,6 +24,17 @@ async function load({ model, device }) {
   const { AutoTokenizer, AutoModelForTokenClassification, pipeline, env } = transformers;
   env.allowLocalModels = false;
   env.allowRemoteModels = true;
+  savedFiles = await trackingCache();
+  env.useCustomCache = true;
+  env.customCache = savedFiles;
+  env.useWasmCache = true;
+  const networkFetch = env.fetch;
+  env.fetch = async (url, options) => {
+    const hit = await savedFiles.match(url);
+    if (hit) return hit;
+    if (offlineOnly) throw new Error('Offline-Datei fehlt: ' + String(url).split('/').pop());
+    return networkFetch(url, options);
+  };
   const ort = env.backends.onnx;
   const prefix = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ort.versions.web}/dist/`;
   // Safari's default plain WASM binary has no webgpuInit export. Use the
@@ -35,15 +48,19 @@ async function load({ model, device }) {
   if (model.kind === 'rampart') {
     const classifier = await loadNerClassifier({
       model: model.dir, device, transformers: { pipeline }, progress_callback,
+      local_files_only: offlineOnly,
     });
     active = { kind: 'rampart', classifier };
   } else {
-    const tok = await AutoTokenizer.from_pretrained(model.dir, { progress_callback });
+    const tok = await AutoTokenizer.from_pretrained(model.dir, { progress_callback, local_files_only: offlineOnly });
     const mdl = await AutoModelForTokenClassification.from_pretrained(model.dir, {
       device, dtype: model.dtype || 'q8', progress_callback,
+      local_files_only: offlineOnly,
     });
     active = { tok, mdl, maxLen: model.maxLen };
   }
+  active.modelId = model.dir;
+  active.device = device;
 }
 
 async function infer({ text, minConf }) {
@@ -72,7 +89,12 @@ let queue = Promise.resolve();
 self.onmessage = ({ data }) => {
   queue = queue.then(async () => {
     try {
-      const result = data.type === 'load' ? await load(data) : await infer(data);
+      let result;
+      if (data.type === 'load') result = await load(data);
+      else if (data.type === 'manifest') result = {
+        model: active.modelId, device: active.device, files: [...savedFiles.files], savedAt: new Date().toISOString(),
+      };
+      else result = await infer(data);
       self.postMessage({ id: data.id, result });
     } catch (error) {
       self.postMessage({ id: data.id, error: error?.message || String(error) });
