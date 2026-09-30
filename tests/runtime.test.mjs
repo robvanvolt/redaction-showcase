@@ -50,6 +50,7 @@ test('worker uses version-matched GPU/CPU assets, passes progress to Rampart and
     const env = { backends: { onnx: { versions: { web: 'test-version' }, wasm: {} } } };
     const context = vm.createContext({
       env, pipeline: () => {},
+      navigator: { gpu: { requestAdapter: async () => ({}) } },
       importTransformers: async () => ({ env, pipeline: context.pipeline }),
       self: { postMessage: m => messages.push(m) },
       loadNerClassifier: async o => { options = o; o.progress_callback({ status: 'ready' }); return () => {}; },
@@ -132,12 +133,12 @@ test('iPad desktop mode starts Rampart on CPU even when WebGPU is exposed', asyn
     userAgent: 'Macintosh', maxTouchPoints: 5,
     gpu: { requestAdapter: async () => { probes++; return {}; } },
   } });
-  assert.equal(probes, 0);
+  assert.equal(probes, 1);
   assert.equal(app.attempts.length, 1);
   assert.equal(app.attempts[0].model.kind, 'rampart');
   assert.equal(app.attempts[0].device, 'wasm');
   assert.equal(app.element('backendBadge').textContent, 'WASM (CPU)');
-  assert.equal(app.element('openaiOption').disabled, true);
+  assert.equal(app.element('openaiOption').disabled, false);
   assert.equal(app.element('overlay').classList.values.has('hidden'), true);
   assert.match(app.element('output').innerHTML, /\[EMAIL\]/);
 });
@@ -149,6 +150,43 @@ test('GPU-only shared URLs open with Rampart on iPad and on browsers without an 
     assert.equal(app.attempts[0].device, 'wasm');
     assert.equal(app.attempts.length, 1);
   }
+});
+
+test('OpenAI is selectable and uses WebGPU on an iPad with an adapter', async () => {
+  const nav = { userAgent: 'Macintosh', maxTouchPoints: 5, gpu: { requestAdapter: async () => ({}) } };
+  const app = await appHarness({ nav });
+  assert.equal(app.element('openaiOption').disabled, false);
+  assert.equal(app.attempts[0].device, 'wasm');
+  await vm.runInContext("selectModel('openai')", app.context);
+  assert.equal(app.runtimes[0].disposed, true);
+  assert.equal(app.attempts[1].device, 'webgpu');
+  assert.equal(app.attempts[1].model.dir, 'openai/privacy-filter');
+  assert.equal(app.element('backendBadge').textContent, 'WebGPU');
+  assert.match(app.element('loadDescription').textContent, /917 MB/);
+  await vm.runInContext("selectModel('shield')", app.context);
+  assert.equal(app.attempts[2].device, 'wasm');
+  const shared = await appHarness({ nav, search: '?model=openai' });
+  assert.equal(shared.element('optModel').value, 'openai');
+  assert.equal(shared.attempts[0].device, 'webgpu');
+});
+
+test('failed or absent iPad adapters keep OpenAI disabled with an explanation', async () => {
+  for (const requestAdapter of [async () => null, async () => { throw Error('GPU unavailable'); }]) {
+    const app = await appHarness({ nav: { userAgent: 'iPad', maxTouchPoints: 5, gpu: { requestAdapter } } });
+    assert.equal(app.element('openaiOption').disabled, true);
+    assert.match(app.element('modelHint').textContent, /iPadOS\/iOS 26/);
+    assert.equal(app.attempts[0].device, 'wasm');
+  }
+});
+
+test('OpenAI GPU failure follows the configured GPU-only path without a CPU retry', async () => {
+  const app = await appHarness({
+    nav: { userAgent: 'iPad', maxTouchPoints: 5, gpu: { requestAdapter: async () => ({}) } },
+    search: '?model=openai', failLoad: () => true,
+  });
+  assert.equal(app.attempts.length, 1);
+  assert.equal(app.attempts[0].device, 'webgpu');
+  assert.equal(app.element('loadRecovery').hidden, false);
 });
 
 test('failed GPU loads fall back in fresh runtimes on startup and model changes', async () => {
@@ -215,4 +253,22 @@ test('worker bootstrap uses the standalone browser bundle and reports import fai
   assert.equal(messages.length, 1);
   assert.equal(messages[0].id, 1);
   assert.match(messages[0].error, /Modell-Bibliothek konnte nicht importiert werden: Failed to fetch/);
+});
+
+test('missing worker GPU fails before any library or model download', async () => {
+  const source = (await readFile(new URL('../runtime-worker.js', import.meta.url), 'utf8'))
+    .replace(/^import[^\n]+from '\.\/rampart\/index.js';\n/, '')
+    .replace(/import\('https:[^']+'\)/, 'importTransformers()');
+  let imports = 0;
+  const messages = [];
+  const context = vm.createContext({
+    navigator: {},
+    self: { postMessage: message => messages.push(message) },
+    importTransformers: async () => { imports++; throw Error('must not be downloaded'); },
+  });
+  vm.runInContext(source, context);
+  context.self.onmessage({ data: { id: 1, type: 'load', model: { dir: 'openai/privacy-filter' }, device: 'webgpu' } });
+  await vm.runInContext('queue', context);
+  assert.equal(imports, 0);
+  assert.match(messages[0].error, /WebGPU ist im Modell-Worker nicht verfügbar/);
 });

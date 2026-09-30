@@ -4,6 +4,12 @@ let active;
 const progress_callback = (progress) => self.postMessage({ type: 'progress', progress });
 
 async function load({ model, device }) {
+  // Check the worker's GPU before fetching the library or model weights. GPU
+  // availability on the page alone does not guarantee availability in a worker.
+  if (device === 'webgpu') {
+    const adapter = await navigator.gpu?.requestAdapter();
+    if (!adapter) throw new Error('WebGPU ist im Modell-Worker nicht verfügbar. Bitte einen Browser mit WebGPU-Unterstützung verwenden.');
+  }
   let transformers;
   try {
     // The .web.js build leaves bare ONNX imports for bundlers. Workers have no

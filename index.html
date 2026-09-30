@@ -214,9 +214,10 @@
           <option value="bardsai">EU-Multilingual (bardsai)</option>
           <option value="shield">Shield-82M (LH-Tech)</option>
           <option value="rampart">Rampart (NDS, 14.7 MB)</option>
-          <option value="openai">OpenAI Privacy Filter (1.4B MoE)</option>
+          <option value="openai">OpenAI Privacy Filter (WebGPU, ≈917 MB)</option>
         </select>
       </label>
+      <span id="modelHint" style="flex-basis:100%; font-size:12px"></span>
       <label><input type="checkbox" id="optRegex" checked> Regex-Hybrid-Layer</label>
       <label><input type="checkbox" id="optKeepGeo"> Stadt/Bundesland/PLZ behalten <small style="color:var(--muted)">(Rampart-Policy)</small></label>
       <label>Schwelle ≥ <input type="range" id="optConf" min="0" max="95" value="35"> <span id="confVal" style="min-width:34px">0.35</span></label>
@@ -504,10 +505,13 @@ let gpuUsable = false;
 async function loadModel(key, onProgress) {
   if (loadedModels[key]) return loadedModels[key];
   const def = MODELS[key];
-  if (def.webgpuOnly && (!gpuUsable || appleMobile)) {
-    throw new Error('Dieses Modell benötigt WebGPU und viel Arbeitsspeicher (917 MB). Bitte Rampart oder ein anderes CPU-fähiges Modell wählen.');
+  if (def.webgpuOnly && !gpuUsable) {
+    throw new Error('OpenAI Privacy Filter benötigt WebGPU. Auf iPad/iPhone ist dafür Safari mit iPadOS/iOS 26 oder neuer und einem verfügbaren GPU-Adapter erforderlich.');
   }
-  const devices = gpuUsable && !appleMobile ? ['webgpu', 'wasm'] : ['wasm'];
+  // iPads keep the proven CPU path for the small models. The OpenAI model
+  // may use WebGPU when the browser actually exposes an adapter.
+  const devices = def.webgpuOnly ? ['webgpu']
+    : gpuUsable && !appleMobile ? ['webgpu', 'wasm'] : ['wasm'];
   for (const device of devices) {
     if (def.webgpuOnly && device !== 'webgpu') break;
     const runtime = createRuntime(onProgress);
@@ -912,6 +916,11 @@ async function selectModel(key) {
   overlay.classList.remove('hidden');
   document.getElementById('loadRecovery').hidden = true;
   fileEl.textContent = MODELS[key].label + ' wird geladen …';
+  document.getElementById('loadDescription').textContent = MODELS[key].webgpuOnly
+    ? 'OpenAI Privacy Filter lädt etwa 917 MB plus Tokenizer. Die Verarbeitung läuft lokal über WebGPU. Das Laden kann auf einem iPad viel Arbeitsspeicher benötigen.'
+    : appleMobile
+      ? 'Die Anonymisierung läuft auf iPad/iPhone vollständig lokal auf der CPU. Der erste Modell-Download wird im Browser gecacht.'
+      : 'Einmaliger Modell-Download inkl. Tokenizer. Danach läuft die Anonymisierung vollständig lokal auf der GPU oder CPU.';
   fill.style.width = '0%'; pctEl.textContent = '…';
   // Keep only one model in memory, particularly on memory-limited iPads.
   for (const [oldKey, old] of Object.entries(loadedModels)) {
@@ -952,20 +961,25 @@ async function selectModel(key) {
   if (urlModel && MODELS[urlModel]) activeModelKey = urlModel;
   document.getElementById('input').value = PRESETS.neuro;
   try {
-    if (!appleMobile && navigator.gpu) {
+    if (navigator.gpu) {
       try { gpuUsable = !!(await navigator.gpu.requestAdapter()); } catch { gpuUsable = false; }
     }
     document.getElementById('gpuBadge').textContent = appleMobile
-      ? 'iPad/iPhone → CPU (WASM)'
+      ? gpuUsable ? 'iPad/iPhone · CPU / WebGPU verfügbar' : 'iPad/iPhone → CPU (WASM)'
       : gpuUsable ? 'WebGPU verfügbar' : 'kein WebGPU → CPU-Fallback';
     if (appleMobile) {
       document.getElementById('loadDescription').textContent =
         'Auf iPad/iPhone startet das kleine Rampart-Modell. Die Anonymisierung läuft vollständig lokal auf der CPU. Der erste Download wird im Browser gecacht.';
     }
     const gpuOption = document.querySelector('#optModel option[value="openai"]');
-    gpuOption.disabled = !gpuUsable || appleMobile;
-    if (gpuOption.disabled) gpuOption.textContent += ' · auf diesem Gerät nicht verfügbar';
-    // A shared URL selecting the GPU-only model should still open on an iPad.
+    gpuOption.disabled = !gpuUsable;
+    if (gpuOption.disabled) gpuOption.textContent += ' · WebGPU fehlt';
+    document.getElementById('modelHint').textContent = gpuUsable
+      ? 'OpenAI Privacy Filter: WebGPU verfügbar · erster Download ≈917 MB.'
+      : appleMobile
+        ? 'OpenAI Privacy Filter benötigt WebGPU: Safari mit iPadOS/iOS 26 oder neuer und verfügbarem GPU-Adapter.'
+        : 'OpenAI Privacy Filter benötigt einen verfügbaren WebGPU-Adapter.';
+    // Shared URLs still open a CPU model when no GPU adapter is available.
     if (MODELS[activeModelKey].webgpuOnly && gpuOption.disabled) {
       activeModelKey = 'rampart';
       document.getElementById('loadDescription').textContent =

@@ -19,9 +19,11 @@ Umschaltbar über das Dropdown im Frontend:
 | Rampart (MiniLM-L6) | 17 Klassen, 7 Sprachen | ≈14.7 MB (Q4) | [`nationaldesignstudio/rampart`](https://huggingface.co/nationaldesignstudio/rampart) |
 | OpenAI Privacy Filter (MoE 1.4B / 50M aktiv) | 8 Klassen (BIOES), 131k Kontext | ≈917 MB (Q4) | [`openai/privacy-filter`](https://huggingface.co/openai/privacy-filter) |
 
-> Das OpenAI-Modell benötigt **WebGPU** und lädt knapp 1 GB. Auf iPad/iPhone
-> sowie ohne verfügbaren GPU-Adapter ist es deaktiviert; auch ein Link mit
-> `?model=openai` startet dort stattdessen Rampart.
+> Das OpenAI-Modell benötigt **WebGPU** und lädt knapp 1 GB. Es ist auch auf
+> iPad/iPhone auswählbar, sobald der Browser einen WebGPU-Adapter bereitstellt
+> (Safari ab iPadOS/iOS 26). Ohne Adapter bleibt es deaktiviert; ein Link mit
+> `?model=openai` startet dann stattdessen Rampart. Ein verfügbarer Adapter
+> garantiert nicht, dass der Arbeitsspeicher für dieses große Modell reicht.
 
 ## iPad / Safari
 
@@ -30,6 +32,10 @@ Auf iPad/iPhone (auch mit Safaris Desktop-User-Agent) startet standardmäßig
 Geräten wie dem iPad der 9. Generation niedrig. EU-Multilingual und Shield bleiben
 manuell auswählbar; ihre größeren Downloads benötigen entsprechend mehr Speicher.
 Die CPU-Inferenz kann länger dauern als auf einer Desktop-GPU.
+Für OpenAI Privacy Filter wird WebGPU auch auf iPad/iPhone geprüft und verwendet.
+Der Worker prüft seinen GPU-Adapter zusätzlich vor dem Download. Die drei kleinen
+Modelle verwenden auf iPad/iPhone weiterhin CPU/WASM. Ohne GPU zeigt die
+Modellauswahl die konkrete Voraussetzung statt einer allgemeinen Gerätesperre.
 
 Modell und Inferenz laufen in einem eigenen Module-Web-Worker, damit die Oberfläche
 bedienbar bleibt. Beim Modellwechsel wird der vorige Worker samt Modell beendet.
