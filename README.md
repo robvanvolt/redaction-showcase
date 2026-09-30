@@ -19,8 +19,30 @@ Umschaltbar über das Dropdown im Frontend:
 | Rampart (MiniLM-L6) | 17 Klassen, 7 Sprachen | ≈14.7 MB (Q4) | [`nationaldesignstudio/rampart`](https://huggingface.co/nationaldesignstudio/rampart) |
 | OpenAI Privacy Filter (MoE 1.4B / 50M aktiv) | 8 Klassen (BIOES), 131k Kontext | ≈917 MB (Q4) | [`openai/privacy-filter`](https://huggingface.co/openai/privacy-filter) |
 
-> Das OpenAI-Modell benötigt **WebGPU** und lädt knapp 1 GB – bitte nur in einem
-> Chromium/Edge 113+ auswählen und etwas Geduld mitbringen.
+> Das OpenAI-Modell benötigt **WebGPU** und lädt knapp 1 GB. Auf iPad/iPhone
+> sowie ohne verfügbaren GPU-Adapter ist es deaktiviert; auch ein Link mit
+> `?model=openai` startet dort stattdessen Rampart.
+
+## iPad / Safari
+
+Auf iPad/iPhone (auch mit Safaris Desktop-User-Agent) startet standardmäßig
+**Rampart (14.7 MB)** mit **WASM auf der CPU**. Das hält den Speicherbedarf auf
+Geräten wie dem iPad der 9. Generation niedrig. EU-Multilingual und Shield bleiben
+manuell auswählbar; ihre größeren Downloads benötigen entsprechend mehr Speicher.
+Die CPU-Inferenz kann länger dauern als auf einer Desktop-GPU.
+
+Modell und Inferenz laufen in einem eigenen Module-Web-Worker, damit die Oberfläche
+bedienbar bleibt. Beim Modellwechsel wird der vorige Worker samt Modell beendet.
+WebGPU wird auf anderen Geräten versucht; schlägt das Laden eines CPU-fähigen
+Modells fehl, startet ein neuer Worker mit WASM. Ein fehlgeschlagener ONNX-Start
+kann dadurch die CPU-Runtime nicht blockieren. Ladefehler bieten Wiederholen und
+den Wechsel zu Rampart an.
+
+Die ONNX-JavaScript- und WASM-Dateien kommen aus derselben gepinnten Version.
+WebGPU verwendet das JSEP-Dateipaar mit `webgpuInit`, die CPU das normale
+WASM-Dateipaar. Es wird ein WASM-Thread verwendet, da GitHub Pages keine
+Cross-Origin-Isolation bereitstellt. Safari benötigt Module-Worker und Import-Maps
+(Safari/iPadOS 16.4 oder neuer).
 
 Ergänzt wird das Ganze durch eine client-seitige **Regex-Hybrid-Schicht** als
 Sicherheitsnetz (Daten, IBAN, Kennzeichen, Dokumentnummern …) sowie Post-Processing:
@@ -57,6 +79,15 @@ python3 -m http.server 8471
 
 Dann `http://localhost:8471` öffnen.
 
+Die Kompatibilitäts- und Fehlerpfade lassen sich ohne Downloads prüfen:
+
+```bash
+node --test tests/runtime.test.mjs
+```
+
+Diese Tests verwenden simulierte Runtime-Antworten; sie ersetzen keinen Test der
+tatsächlichen Modell-Inferenz auf einem iPad.
+
 ## Deployment
 
 GitHub Pages, Branch `main`, Ordner `/` (root). `index.html` liegt im Repo-Wurzelverzeichnis.
@@ -65,6 +96,8 @@ GitHub Pages, Branch `main`, Ordner `/` (root). `index.html` liegt im Repo-Wurze
 
 ```
 index.html          selbstständige App (CDN + Import-Map für transformers.js)
+runtime-client.js   Worker-Kommunikation und iPad/iPhone-Erkennung
+runtime-worker.js   gepinnte ONNX-Runtime, Modell-Laden und Inferenz
 rampart/index.js    gebündelte Rampart-Runtime
 .nojekyll           Jekyll-Verarbeitung auf GitHub Pages abschalten
 ```

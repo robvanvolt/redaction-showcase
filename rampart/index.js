@@ -194,12 +194,13 @@ var PERSON_LABELS = /* @__PURE__ */ new Set(["GIVEN_NAME", "SURNAME"]);
 var LEFT_PARTICLE_RE = /([\p{Lu}][\p{L}\p{M}\u2019']{0,3})([\s'\u2019.-]{1,3})$/u;
 var RIGHT_PARTICLE_RE = /^([\s'\u2019.-]{1,3})([\p{Lu}][\p{L}\p{M}\u2019']{0,3})/u;
 async function loadNerClassifier(options = {}) {
-  const { pipeline } = await import("@huggingface/transformers");
+  const { pipeline } = options.transformers ?? await import("@huggingface/transformers");
   const merged = { ...DEFAULT_OPTIONS, ...options };
   const model = merged.model ?? RAMPART_MODEL_ID;
   const classifier = await pipeline("token-classification", model, {
     dtype: "q4",
-    device: merged.device
+    device: merged.device,
+    progress_callback: merged.progress_callback
   });
   const adapter = (text, opts) => classifier(text, opts);
   const tokenizer = classifier.tokenizer;

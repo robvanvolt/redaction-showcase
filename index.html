@@ -59,16 +59,12 @@
     flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
     padding: 18px 26px; min-height: 0;
   }
-  @media (max-width: 980px) {
-    main { grid-template-columns: 1fr; padding: 14px; gap: 14px; }
-    header { padding: 14px 16px 10px; }
-    footer { padding: 8px 16px 14px; }
-    section.pane { min-height: 340px; }
-    #statusbar { position: static; justify-content: center; margin: 0 auto 12px; }
-    .doc, #output { font-size: 16px; }
-    select, button { min-height: 38px; }
-    input[type="range"] { width: 90px; }
-  }
+  .pane-head { flex-wrap: wrap; gap: 8px; }
+  .pane-head > span { flex-wrap: wrap; max-width: 100%; }
+  .pane-head select { max-width: 100%; }
+  .pane { min-width: 0; }
+  #loadFile { overflow-wrap: anywhere; min-width: 0; }
+  #loadRecovery button { margin: 4px 0; min-height: 44px; }
   @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; animation-duration: .01s !important; }
   }
@@ -176,6 +172,16 @@
   @keyframes r { to { transform: rotate(360deg); } }
   .legend { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 8px 16px 12px; font-size: 11px; font-family: var(--mono); color: var(--muted); }
   .legend span::before { content: "● "; color: var(--cat); }
+  @media (max-width: 980px) {
+    main { grid-template-columns: 1fr; padding: 14px; gap: 14px; }
+    header { padding: 14px 16px 10px; }
+    footer { padding: 8px 16px 14px; }
+    section.pane { min-height: 340px; }
+    #statusbar { position: static; justify-content: center; margin: 0 auto 12px; }
+    .doc, #output { font-size: 16px; }
+    select, button { min-height: 44px; }
+    input[type="range"] { width: 90px; }
+  }
 </style>
 </head>
 <body>
@@ -259,9 +265,13 @@
 <div id="overlay">
   <div class="card">
     <h2>Modell wird geladen …</h2>
-    <p>Einmaliger Download des quantisierten ONNX-Modells inkl. Tokenizer. Danach läuft die Anonymisierung vollständig lokal – in Echtzeit, direkt auf deiner GPU.</p>
+    <p id="loadDescription">Einmaliger Download des quantisierten ONNX-Modells inkl. Tokenizer. Danach läuft die Anonymisierung vollständig lokal – je nach Browser auf der GPU oder CPU.</p>
     <div class="track"><div class="fill" id="loadFill"></div></div>
     <div class="row"><span id="loadFile">verbinde …</span><span id="loadPct">0%</span></div>
+    <div id="loadRecovery" hidden style="margin-top:16px">
+      <button id="btnRetry">Erneut versuchen</button>
+      <button id="btnSmallModel">Rampart laden (14.7 MB)</button>
+    </div>
   </div>
 </div>
 
@@ -274,18 +284,14 @@
 }
 </script>
 <script type="module">
+import { createRuntime, isAppleMobile } from './runtime-client.js';
 import {
-  AutoTokenizer, AutoModelForTokenClassification, env,
-} from '@huggingface/transformers';
-import {
-  detectHeuristics, premask, projectMaskedSpan, loadNerClassifier, detectNer, applyPolicy,
+  detectHeuristics, premask, projectMaskedSpan, applyPolicy,
 } from '@nationaldesignstudio/rampart';
 
 // GitHub-Pages-Variante: alle Gewichte werden direkt vom Hugging-Face-CDN
 // geladen (nichts davon liegt im Repository). Die Inferenz selbst läuft
 // weiterhin ausschließlich lokal im Browser – es werden keine Texte gesendet.
-env.allowLocalModels = false;
-env.allowRemoteModels = true;
 
 const PRESETS = {
   neuro: `Gutachtliche Stellungnahme
@@ -344,8 +350,6 @@ const CAT = (ty) => {
 };
 const CAT_COLOR = { person:'var(--person)', contact:'var(--contact)', location:'var(--location)', org:'var(--org)', id:'var(--id)', finance:'var(--finance)', date:'var(--date)', net:'var(--net)', health:'var(--health)', other:'var(--other)' };
 const CAT_DE = { person:'Person', contact:'Kontakt', location:'Ort', org:'Organisation', id:'Kenner', finance:'Finanzen', date:'Datum', net:'Netz', health:'Gesundheit', other:'Sonstiges' };
-
-let ID2L = null;
 
 const REGEX_RULES = [
   ['DATE', /\b\d{1,2}\.\s?(?:Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember|Jan|Feb|Mrz|Apr|Jun|Jul|Aug|Sep|Okt|Nov|Dez)\.?\s?\d{2,4}\b/g],
@@ -494,28 +498,31 @@ function updateModelBadges(key) {
 
 const loadedModels = {};
 let activeModelKey = 'bardsai';
+const appleMobile = isAppleMobile();
+let gpuUsable = false;
 
 async function loadModel(key, onProgress) {
   if (loadedModels[key]) return loadedModels[key];
   const def = MODELS[key];
-  if (def.webgpuOnly && activeDevice !== 'webgpu') {
-    throw new Error('Dieses Modell benötigt WebGPU (917 MB Q4-MoE). Bitte in einem Chromium-basierten Browser mit WebGPU öffnen.');
+  if (def.webgpuOnly && (!gpuUsable || appleMobile)) {
+    throw new Error('Dieses Modell benötigt WebGPU und viel Arbeitsspeicher (917 MB). Bitte Rampart oder ein anderes CPU-fähiges Modell wählen.');
   }
-  if (def.kind === 'rampart') {
-    const classifier = await loadNerClassifier({
-      model: def.dir,
-      device: activeDevice === 'webgpu' ? 'webgpu' : 'wasm',
-    });
-    loadedModels[key] = { kind: 'rampart', classifier };
-    return loadedModels[key];
+  const devices = gpuUsable && !appleMobile ? ['webgpu', 'wasm'] : ['wasm'];
+  for (const device of devices) {
+    if (def.webgpuOnly && device !== 'webgpu') break;
+    const runtime = createRuntime(onProgress);
+    try {
+      await runtime.request('load', { model: def, device });
+      loadedModels[key] = { kind: def.kind, device, runtime };
+      return loadedModels[key];
+    } catch (error) {
+      runtime.dispose();
+      if (device === 'wasm' || def.webgpuOnly) throw error;
+      console.warn('WebGPU load failed, retrying in a fresh CPU runtime:', error);
+      document.getElementById('gpuBadge').textContent = 'WebGPU fehlgeschlagen → CPU-Fallback';
+      document.getElementById('loadFile').textContent = 'GPU nicht nutzbar – lade CPU-Runtime …';
+    }
   }
-  const tok = await AutoTokenizer.from_pretrained(def.dir);
-  const mdl = await AutoModelForTokenClassification.from_pretrained(def.dir, {
-    device: activeDevice, dtype: def.dtype || 'q8', progress_callback: onProgress,
-  });
-  const id2l = mdl.config.id2label;
-  loadedModels[key] = { tok, mdl, id2l };
-  return loadedModels[key];
 }
 
 function mergePersonParts(spans, text) {
@@ -669,9 +676,8 @@ function mergeSpans(modelSpans, regexSpans) {
   return kept.filter((sp, i) => i === 0 || sp.s >= kept[i - 1].e);
 }
 
-let tokenizer = null, model = null, runId = 0, lastText = '';
+let runId = 0, lastText = '';
 let currentSpans = [], currentText = '', surrogateMap = new Map();
-let activeDevice = 'wasm';
 
 function buildSurrogates(text, spans) {
   surrogateMap = new Map();
@@ -738,65 +744,59 @@ async function anonymize() {
   const t0 = performance.now();
   const minConf = parseInt(document.getElementById('optConf').value, 10) / 100;
 
-  let merged, tokCount = null;
+  try {
+    let merged, tokCount = null;
 
-  if (active.kind === 'rampart') {
-    const heuristic = detectHeuristics(text);
-    const map = premask(text, heuristic);
-    const maskedSpans = await detectNer(map.masked, active.classifier, Math.min(minConf, 0.4));
-    if (myRun !== runId) return;
-    const contextual = [];
-    for (const span of maskedSpans) {
-      const p = projectMaskedSpan(span, text, map);
-      if (p !== null) contextual.push(p);
-    }
-    const extra = [];
-    for (const [type, re] of REGEX_RULES) {
-      if (!/^(IBAN|VEHICLE_IDENTIFIER|DOCUMENT_REFERENCE)$/.test(type)) continue;
-      re.lastIndex = 0;
-      for (let m; (m = re.exec(text)); ) {
-        extra.push({ label: type, start: m.index, end: m.index + m[0].length, score: 0.99, source: 'heuristic', text: m[0] });
+    if (active.kind === 'rampart') {
+      const heuristic = detectHeuristics(text);
+      const map = premask(text, heuristic);
+      const maskedSpans = await active.runtime.request('infer', { text: map.masked, minConf: Math.min(minConf, 0.4) });
+      if (myRun !== runId) return;
+      const contextual = [];
+      for (const span of maskedSpans) {
+        const p = projectMaskedSpan(span, text, map);
+        if (p !== null) contextual.push(p);
       }
-    }
-    const keepLabels = document.getElementById('optKeepGeo').checked ? new Set(['CITY', 'STATE', 'ZIP_CODE']) : new Set();
-    const policySpans = applyPolicy([...heuristic, ...contextual, ...extra], keepLabels).reverse();
-    merged = policySpans.map((sp) => ({ type: sp.label, s: sp.start, e: sp.end, conf: [sp.score], src: sp.source === 'heuristic' ? 're' : 'model' }));
-  } else {
-      const enc = await active.tok(text, { truncation: true, max_length: MODELS[activeModelKey].maxLen });
-      const pieces = enc.input_ids.tolist().flat().map((id) => active.tok.decode([Number(id)]));
-    const offs = alignOffsets(text, pieces);
-      const out = await active.mdl(enc);
-      const dims = out.logits.dims;
-    const data = out.logits.data;
-    const S = dims[1], C = dims[2];
-    tokCount = S;
-    const labels = [];
-    for (let i = 0; i < S; i++) {
-      let best = -Infinity, bi = 0;
-      for (let c = 0; c < C; c++) { const v = data[i * C + c]; if (v > best) { best = v; bi = c; } }
-      let sum = 0;
-      for (let c = 0; c < C; c++) sum += Math.exp(data[i * C + c] - best);
-      labels.push({ t: active.id2l[String(bi)], c: 1 / sum });
-    }
-    if (myRun !== runId) return;
+      const extra = [];
+      for (const [type, re] of REGEX_RULES) {
+        if (!/^(IBAN|VEHICLE_IDENTIFIER|DOCUMENT_REFERENCE)$/.test(type)) continue;
+        re.lastIndex = 0;
+        for (let m; (m = re.exec(text)); ) {
+          extra.push({ label: type, start: m.index, end: m.index + m[0].length, score: 0.99, source: 'heuristic', text: m[0] });
+        }
+      }
+      const keepLabels = document.getElementById('optKeepGeo').checked ? new Set(['CITY', 'STATE', 'ZIP_CODE']) : new Set();
+      const policySpans = applyPolicy([...heuristic, ...contextual, ...extra], keepLabels).reverse();
+      merged = policySpans.map((sp) => ({ type: sp.label, s: sp.start, e: sp.end, conf: [sp.score], src: sp.source === 'heuristic' ? 're' : 'model' }));
+    } else {
+      const { pieces, labels, tokCount: count } = await active.runtime.request('infer', { text });
+      const offs = alignOffsets(text, pieces);
+      tokCount = count;
+      if (myRun !== runId) return;
 
-    let modelSpans = decodeSpans(labels, offs, minConf);
+      let modelSpans = decodeSpans(labels, offs, minConf);
       if (MODELS[activeModelKey].personMerge) {
-      modelSpans = mergePersonParts(modelSpans, text);
-      modelSpans = mergeAddressParts(modelSpans, text);
-    }
-    modelSpans = snapEdges(text, modelSpans);
+        modelSpans = mergePersonParts(modelSpans, text);
+        modelSpans = mergeAddressParts(modelSpans, text);
+      }
+      modelSpans = snapEdges(text, modelSpans);
       const regexSpans = await runRegex(text, document.getElementById('optRegex').checked);
       merged = mergeSpans(modelSpans, regexSpans);
     }
 
-  buildSurrogates(text, merged);
+    if (myRun !== runId) return;
+    buildSurrogates(text, merged);
 
-  const dt = Math.round(performance.now() - t0);
-  document.getElementById('stLat').textContent = dt + ' ms';
-  document.getElementById('stTok').textContent = tokCount ?? '–';
-  document.getElementById('outMeta').textContent = `${merged.length} Entitäten · ${dt} ms · ${MODELS[activeModelKey].label.split('·')[0].trim()}`;
-  render(text, merged);
+    const dt = Math.round(performance.now() - t0);
+    document.getElementById('stLat').textContent = dt + ' ms';
+    document.getElementById('stTok').textContent = tokCount ?? '–';
+    document.getElementById('outMeta').textContent = `${merged.length} Entitäten · ${dt} ms · ${MODELS[activeModelKey].label.split('·')[0].trim()}`;
+    render(text, merged);
+  } catch (error) {
+    if (myRun !== runId) return;
+    lastText = '';
+    showLoadError(error, activeModelKey);
+  }
 }
 
 let debounceTimer = null;
@@ -849,7 +849,7 @@ document.getElementById('btnTxt').addEventListener('click', () => {
 document.getElementById('btnJson').addEventListener('click', () => {
   const report = {
     generated: new Date().toISOString(),
-    model: 'bardsai/eu-pii-anonimization-multilang (ONNX q8, transformers.js)',
+    model: MODELS[activeModelKey].dir,
     backend: document.getElementById('backendBadge').textContent,
     mode: document.getElementById('optMode').value,
     entities: currentSpans.map((sp) => ({
@@ -890,78 +890,101 @@ function progressCb(p) {
   }
 }
 
+let loading = false;
+let attemptedModelKey = activeModelKey;
+
+function showLoadError(error, key) {
+  console.error(error);
+  attemptedModelKey = key;
+  overlay.classList.remove('hidden');
+  fileEl.textContent = 'Fehler: ' + (error?.message || error);
+  pctEl.textContent = '✗';
+  document.getElementById('loadRecovery').hidden = false;
+}
+
+async function selectModel(key) {
+  if (loading) return;
+  loading = true;
+  attemptedModelKey = key;
+  runId++;
+  const select = document.getElementById('optModel');
+  select.disabled = true;
+  overlay.classList.remove('hidden');
+  document.getElementById('loadRecovery').hidden = true;
+  fileEl.textContent = MODELS[key].label + ' wird geladen …';
+  fill.style.width = '0%'; pctEl.textContent = '…';
+  // Keep only one model in memory, particularly on memory-limited iPads.
+  for (const [oldKey, old] of Object.entries(loadedModels)) {
+    old.runtime.dispose();
+    delete loadedModels[oldKey];
+  }
+  // Previous output belongs to the old model; clear it during a switch.
+  currentText = ''; currentSpans = []; surrogateMap.clear();
+  document.getElementById('output').textContent = '';
+  document.getElementById('entities').textContent = '';
+  document.getElementById('outMeta').textContent = '';
+  for (const id of ['stLat', 'stEnt', 'stTok']) document.getElementById(id).textContent = '–';
+  try {
+    const active = await loadModel(key, progressCb);
+    activeModelKey = key;
+    select.value = key;
+    updateModelBadges(key);
+    const badge = document.getElementById('backendBadge');
+    badge.textContent = active.device === 'webgpu' ? 'WebGPU' : 'WASM (CPU)';
+    badge.classList.remove('ok', 'warn');
+    badge.classList.add(active.device === 'webgpu' ? 'ok' : 'warn');
+    fill.style.width = '100%'; pctEl.textContent = 'fertig';
+    overlay.classList.add('hidden');
+    lastText = '';
+    await anonymize();
+  } catch (error) {
+    showLoadError(error, key);
+    select.value = activeModelKey;
+  } finally {
+    select.disabled = false;
+    loading = false;
+  }
+}
+
 (async function init() {
   const urlModel = new URLSearchParams(location.search).get('model');
-  if (urlModel && MODELS[urlModel]) {
-    activeModelKey = urlModel;
-    document.getElementById('optModel').value = urlModel;
-  }
-  updateModelBadges(activeModelKey);
+  if (appleMobile) activeModelKey = 'rampart';
+  if (urlModel && MODELS[urlModel]) activeModelKey = urlModel;
   document.getElementById('input').value = PRESETS.neuro;
-
   try {
-    let device = 'wasm', backendLabel = 'WASM (CPU)';
-    const gpuAvailable = typeof navigator !== 'undefined' && !!navigator.gpu;
-    let gpuUsable = false;
-    if (gpuAvailable) {
+    if (!appleMobile && navigator.gpu) {
       try { gpuUsable = !!(await navigator.gpu.requestAdapter()); } catch { gpuUsable = false; }
     }
-    document.getElementById('gpuBadge').textContent = gpuUsable ? 'WebGPU verfügbar' : 'kein WebGPU → CPU-Fallback';
-    if (gpuUsable) {
-      try {
-        activeDevice = 'webgpu';
-        const m = await loadModel(activeModelKey, progressCb);
-        tokenizer = m.tok; model = m.mdl; ID2L = m.id2l;
-        device = 'webgpu'; backendLabel = 'WebGPU';
-      } catch (err) {
-        console.warn('WebGPU load failed, falling back to WASM:', err);
-        delete loadedModels[activeModelKey];
-        activeDevice = 'wasm';
-      }
+    document.getElementById('gpuBadge').textContent = appleMobile
+      ? 'iPad/iPhone → CPU (WASM)'
+      : gpuUsable ? 'WebGPU verfügbar' : 'kein WebGPU → CPU-Fallback';
+    if (appleMobile) {
+      document.getElementById('loadDescription').textContent =
+        'Auf iPad/iPhone startet das kleine Rampart-Modell. Die Anonymisierung läuft vollständig lokal auf der CPU. Der erste Download wird im Browser gecacht.';
     }
-    if (!loadedModels[activeModelKey]) {
-      activeDevice = 'wasm';
-      const m = await loadModel(activeModelKey, progressCb);
-      tokenizer = m.tok; model = m.mdl; ID2L = m.id2l;
+    const gpuOption = document.querySelector('#optModel option[value="openai"]');
+    gpuOption.disabled = !gpuUsable || appleMobile;
+    if (gpuOption.disabled) gpuOption.textContent += ' · auf diesem Gerät nicht verfügbar';
+    // A shared URL selecting the GPU-only model should still open on an iPad.
+    if (MODELS[activeModelKey].webgpuOnly && gpuOption.disabled) {
+      activeModelKey = 'rampart';
+      document.getElementById('loadDescription').textContent =
+        'Das angefragte OpenAI-Modell benötigt WebGPU und viel Arbeitsspeicher. Auf diesem Gerät wird stattdessen Rampart vollständig lokal geladen.';
     }
-    const badge = document.getElementById('backendBadge');
-    badge.textContent = backendLabel;
-    badge.classList.add(device === 'webgpu' ? 'ok' : 'warn');
-
-    fill.style.width = '100%'; pctEl.textContent = 'fertig';
-    setTimeout(() => overlay.classList.add('hidden'), 350);
-    lastText = '';
-    anonymize();
-  } catch (err) {
-    console.error(err);
-    fileEl.textContent = 'Fehler: ' + (err?.message || err);
-    pctEl.textContent = '✗';
+    document.getElementById('optModel').value = activeModelKey;
+    updateModelBadges(activeModelKey);
+    await selectModel(activeModelKey);
+  } catch (error) {
+    showLoadError(error, activeModelKey);
   }
 })();
 
-document.getElementById('optModel').addEventListener('change', async (e) => {
-  const key = e.target.value;
-  if (key === activeModelKey) return;
-  runId++;
-  overlay.classList.remove('hidden');
-  fileEl.textContent = MODELS[key].label + ' wird geladen …';
-  fill.style.width = '10%'; pctEl.textContent = '…';
-  try {
-    const m = await loadModel(key, progressCb);
-    activeModelKey = key;
-    tokenizer = m.tok; model = m.mdl; ID2L = m.id2l;
-    updateModelBadges(key);
-    lastText = '';
-    fill.style.width = '100%'; pctEl.textContent = 'fertig';
-    setTimeout(() => overlay.classList.add('hidden'), 250);
-    anonymize();
-  } catch (err) {
-    console.error(err);
-    fileEl.textContent = 'Fehler: ' + (err?.message || err);
-    pctEl.textContent = '✗';
-    e.target.value = activeModelKey;
-  }
+document.getElementById('optModel').addEventListener('change', (event) => {
+  if (event.target.value !== activeModelKey) selectModel(event.target.value);
 });
+document.getElementById('btnRetry').addEventListener('click', () => selectModel(attemptedModelKey));
+document.getElementById('btnSmallModel').addEventListener('click', () => selectModel('rampart'));
+
 </script>
 </body>
 </html>
