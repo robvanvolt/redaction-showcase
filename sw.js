@@ -1,4 +1,5 @@
 import { APP_CACHE, DATA_CACHE, APP_FILES, BUNDLE_URL } from './pwa-config.js';
+import { purgeRemovedModels } from './offline-storage.js';
 
 const base = self.registration.scope;
 self.addEventListener('install', event => {
@@ -13,6 +14,7 @@ self.addEventListener('activate', event => {
     for (const key of await caches.keys()) {
       if (key.startsWith('med-redact-app-') && key !== APP_CACHE) await caches.delete(key);
     }
+    await purgeRemovedModels();
     await self.clients.claim();
   })());
 });

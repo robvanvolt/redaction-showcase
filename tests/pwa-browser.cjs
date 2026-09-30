@@ -28,7 +28,7 @@ export const AutoTokenizer = { async from_pretrained(model, opts) {
 } };
 export const AutoModelForTokenClassification = { async from_pretrained(model, opts) {
   for (const url of Object.values(env.backends.onnx.wasm.wasmPaths)) await file(url,opts.local_files_only);
-  for (const name of ['config.json','onnx/model_' + opts.dtype + '.onnx', ...(model.includes('openai') ? ['onnx/model_q4.onnx_data'] : [])]) await file(modelURL(model,name),opts.local_files_only);
+  for (const name of ['config.json','onnx/model_' + opts.dtype + '.onnx']) await file(modelURL(model,name),opts.local_files_only);
   opts.progress_callback?.({status:'ready'});
   const mdl = async () => ({ logits: { dims: [1,1,2], data: [10,0] } });
   mdl.config = { id2label: {'0':'O','1':'B-PERSON_NAME'} };
@@ -86,8 +86,9 @@ const server = http.createServer(async (req, res) => {
     files:(await (await caches.open('transformers-cache')).keys()).map(r=>r.url),
     overflow:document.documentElement.scrollWidth>innerWidth,
   }));
-  assert.equal(saved.manifests,4);
-  assert.ok(saved.files.some(url=>url.endsWith('model_q4.onnx_data')),'external ONNX weights saved');
+  assert.equal(saved.manifests,2);
+  assert.deepEqual(await page.locator('#optModel option').evaluateAll(options=>options.map(o=>o.value)),['rampart','shield']);
+  assert.ok(saved.files.every(url=>!url.includes('openai/privacy-filter') && !url.includes('bardsai/')));
   assert.equal(saved.overflow,false,'iPad layout fits');
   await page.locator('#btnVerifyOffline').click();
   await page.waitForFunction(()=>document.querySelector('#pwaMessage').textContent.startsWith('Offline-Test bestanden'),{},{timeout:30000});
@@ -101,7 +102,7 @@ const server = http.createServer(async (req, res) => {
   page.on('pageerror',e=>errors.push(e.message));
   await page.goto(base+'?model=openai');
   await page.waitForFunction(()=>document.querySelector('#stEnt').textContent !== '–');
-  assert.equal(await page.locator('#optModel').inputValue(),'openai');
+  assert.equal(await page.locator('#optModel').inputValue(),'rampart');
   assert.equal(await page.locator('#offlineBadge').textContent(),'Offline-Demo bereit');
   await page.locator('#optModel').selectOption('shield');
   await page.waitForFunction(()=>document.querySelector('#modelBadge').textContent === 'LH-Tech-AI/Shield-82M' && document.querySelector('#stEnt').textContent !== '–');
@@ -112,5 +113,5 @@ const server = http.createServer(async (req, res) => {
   await page.waitForFunction(()=>document.querySelector('#pwaMessage').textContent.startsWith('Offline-Test bestanden'),{},{timeout:30000});
   assert.equal(requests,before,'cold start and all-model offline verification made zero server requests');
   assert.equal(errors.length,0,errors.join('\n'));
-  console.log('PASS: GitHub Pages subpath, all four model manifests, external ONNX data, offline verification, fresh offline page/workers, switching and editing; zero network requests.');
+  console.log('PASS: GitHub Pages subpath, both model manifests, removed-model link fallback, offline verification, fresh offline page/workers, switching and editing; zero network requests.');
 })().catch(e=>{console.error(e);process.exitCode=1;}).finally(async()=>{await browser?.close();server.close();});

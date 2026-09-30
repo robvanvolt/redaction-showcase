@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile, access } from 'node:fs/promises';
 import { APP_CACHE, DATA_CACHE, READY_CACHE, APP_FILES, BUNDLE_URL, RUNTIME_FILES } from '../pwa-config.js';
-import { trackingCache, saveModelManifest, getModelStatus, prepareDependencies, shellIsReady, runtimesAreReady } from '../offline-storage.js';
+import { trackingCache, saveModelManifest, getModelStatus, prepareDependencies, shellIsReady, runtimesAreReady, purgeRemovedModels } from '../offline-storage.js';
 
 class MemoryCache {
   entries = new Map();
@@ -17,6 +17,8 @@ class MemoryCache {
     for (const [url, response] of this.entries) if (this.key(url, options) === key) return response.clone();
     return undefined;
   }
+  async keys() { return [...this.entries.keys()].map(url => new Request(url)); }
+  async delete(request) { return this.entries.delete(this.key(request)); }
   async put(request, response) { this.entries.set(this.key(request), response.clone()); }
 }
 function storage() {
@@ -35,17 +37,17 @@ test('tracking and readiness verify external weights and detect cache eviction',
   try {
     const cache = await trackingCache();
     const files = ['config.json','tokenizer.json','onnx/model_q4.onnx','onnx/model_q4.onnx_data']
-      .map(file => 'https://huggingface.co/openai/privacy-filter/resolve/main/' + file);
+      .map(file => 'https://huggingface.co/fixture/model/resolve/main/' + file);
     for (const file of files) await cache.put(file, new Response('fixture'));
     assert.equal(cache.files.size, 4);
-    const manifest = { model:'openai/privacy-filter', files:[...cache.files], device:'webgpu' };
-    await saveModelManifest('openai',manifest);
-    assert.equal((await getModelStatus('openai',manifest.model)).ready,true);
-    assert.equal((await getModelStatus('openai','different/repository')).ready,false);
+    const manifest = { model:'fixture/model', files:[...cache.files], device:'webgpu' };
+    await saveModelManifest('fixture',manifest);
+    assert.equal((await getModelStatus('fixture',manifest.model)).ready,true);
+    assert.equal((await getModelStatus('fixture','different/repository')).ready,false);
     const models = await caches.open(DATA_CACHE);
     models.entries.delete(models.key(files[3]));
-    assert.equal((await getModelStatus('openai',manifest.model)).ready,false);
-    await assert.rejects(saveModelManifest('openai',manifest),/Offline-Datei fehlt/);
+    assert.equal((await getModelStatus('fixture',manifest.model)).ready,false);
+    await assert.rejects(saveModelManifest('fixture',manifest),/Offline-Datei fehlt/);
     assert.equal((await caches.open(READY_CACHE)).entries.size,1,'metadata only, no duplicate model weights');
   } finally { globalThis.caches = previous; }
 });
@@ -107,18 +109,19 @@ test('service worker serves a cold navigation, worker modules, CDN library and e
   const base='https://example.test/redaction-showcase/';
   for (const file of APP_FILES) await app.put(new URL(file,base),new Response(file));
   await app.put(BUNDLE_URL,new Response('library'));
-  const weights='https://huggingface.co/openai/privacy-filter/resolve/main/onnx/model_q4.onnx_data';
+  const weights='https://huggingface.co/fixture/model/resolve/main/onnx/model_q4.onnx_data';
   await data.put(weights,new Response('weights'));
   const handlers=new Map();
-  let network=0, claimed=false;
+  let network=0, claimed=false, purged=false;
   const context=vm.createContext({
     APP_CACHE,DATA_CACHE,APP_FILES,BUNDLE_URL,caches:cacheStorage,URL,Request,
+    purgeRemovedModels: async () => { purged = true; },
     fetch:async()=>{network++;throw Error('network disabled');},
     self:{registration:{scope:base},clients:{claim:async()=>{claimed=true;}},addEventListener:(event,handler)=>handlers.set(event,handler)},
   });
-  const source=(await readFile(new URL('../sw.js',import.meta.url),'utf8')).replace(/^import[^\n]+\n/,'');
+  const source=(await readFile(new URL('../sw.js',import.meta.url),'utf8')).replace(/^import[^\n]+\n/gm,'');
   vm.runInContext(source,context);
-  for (const url of [base+'?model=openai',base+'runtime-worker.js',base+'offline-storage.js',BUNDLE_URL,weights]) {
+  for (const url of [base+'?model=rampart',base+'runtime-worker.js',base+'offline-storage.js',BUNDLE_URL,weights]) {
     let response;
     handlers.get('fetch')({request:new Request(url),respondWith:promise=>response=promise});
     assert.equal((await response).ok,true);
@@ -130,7 +133,41 @@ test('service worker serves a cold navigation, worker modules, CDN library and e
   handlers.get('activate')({waitUntil:promise=>activation=promise});
   await activation;
   assert.equal(claimed,true);
+  assert.equal(purged,true);
   assert.ok(!(await cacheStorage.keys()).includes('med-redact-app-old'));
   assert.ok((await cacheStorage.keys()).includes(DATA_CACHE));
   assert.ok((await cacheStorage.keys()).includes(READY_CACHE));
+});
+
+test('retired model cleanup deletes only their weights and readiness metadata', async () => {
+  const previous = globalThis.caches;
+  globalThis.caches = storage();
+  try {
+    const data = await caches.open(DATA_CACHE);
+    const removed = ['bardsai/eu-pii-anonimization-multilang', 'openai/privacy-filter'];
+    const files = removed.flatMap(repo => ['config.json', 'tokenizer.json', 'onnx/model.onnx', 'onnx/model.onnx_data']
+      .map(file => `https://huggingface.co/${repo}/resolve/main/${file}`));
+    const kept = [
+      'https://huggingface.co/nationaldesignstudio/rampart/resolve/main/onnx/model.onnx',
+      'https://huggingface.co/onnx-community/Shield-82M-ONNX/resolve/main/onnx/model.onnx',
+      'https://huggingface.co/openai/privacy-filter-other/resolve/main/config.json',
+      'https://other.example/openai/privacy-filter/resolve/main/config.json',
+      ...RUNTIME_FILES,
+    ];
+    for (const url of [...files, ...kept]) await data.put(url, new Response('fixture'));
+    for (const [i, key] of ['bardsai', 'openai'].entries()) {
+      await saveModelManifest(key, { model: removed[i], files: files.slice(i * 4, i * 4 + 4) });
+    }
+    await saveModelManifest('rampart', { model: 'nationaldesignstudio/rampart', files: [kept[0]] });
+    await saveModelManifest('shield', { model: 'onnx-community/Shield-82M-ONNX', files: [kept[1]] });
+    await purgeRemovedModels();
+    for (const url of files) assert.equal(await data.match(url), undefined);
+    for (const url of kept) assert.ok(await data.match(url), url);
+    for (const [i, key] of ['bardsai', 'openai'].entries()) {
+      assert.equal((await getModelStatus(key, removed[i])).ready, false);
+    }
+    assert.equal((await getModelStatus('rampart', 'nationaldesignstudio/rampart')).ready, true);
+    assert.equal((await getModelStatus('shield', 'onnx-community/Shield-82M-ONNX')).ready, true);
+    await purgeRemovedModels(); // Safe on later activations, too.
+  } finally { globalThis.caches = previous; }
 });

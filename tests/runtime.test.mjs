@@ -100,7 +100,7 @@ async function appHarness({ nav, search = '', failLoad = () => false, failInfer 
     setupPWA: () => ({ busy: false, offlineOnly: false, init: async () => {}, preferredKey: async key => key, modelLoaded: async () => {} }),
     ...rampart, isAppleMobile: () => isAppleMobile(nav), navigator: nav, location: { search }, URLSearchParams,
     performance, setTimeout, clearTimeout, console: { error() {}, warn() {} },
-    document: { getElementById: element, querySelector: () => element('openaiOption') },
+    document: { getElementById: element },
     createRuntime: onProgress => {
       const runtime = {
         disposed: false,
@@ -140,55 +140,33 @@ test('iPad desktop mode starts Rampart on CPU even when WebGPU is exposed', asyn
   assert.equal(app.attempts[0].model.kind, 'rampart');
   assert.equal(app.attempts[0].device, 'wasm');
   assert.equal(app.element('backendBadge').textContent, 'WASM (CPU)');
-  assert.equal(app.element('openaiOption').disabled, false);
   assert.equal(app.element('overlay').classList.values.has('hidden'), true);
   assert.match(app.element('output').innerHTML, /\[EMAIL\]/);
 });
 
-test('GPU-only shared URLs open with Rampart on iPad and on browsers without an adapter', async () => {
-  for (const nav of [{ userAgent: 'iPad', maxTouchPoints: 5 }, { userAgent: 'Firefox', maxTouchPoints: 0 }]) {
-    const app = await appHarness({ nav, search: '?model=openai' });
-    assert.equal(app.element('optModel').value, 'rampart');
-    assert.equal(app.attempts[0].device, 'wasm');
-    assert.equal(app.attempts.length, 1);
+test('removed model links safely start Rampart on iPad and desktop', async () => {
+  for (const nav of [
+    { userAgent: 'iPad', maxTouchPoints: 5, gpu: { requestAdapter: async () => ({}) } },
+    { userAgent: 'Firefox', maxTouchPoints: 0 },
+  ]) {
+    for (const key of ['openai', 'bardsai']) {
+      const app = await appHarness({ nav, search: '?model=' + key });
+      assert.equal(app.element('optModel').value, 'rampart');
+      assert.equal(app.attempts[0].device, 'wasm');
+      assert.equal(app.attempts.length, 1);
+    }
   }
 });
 
-test('OpenAI is selectable and uses WebGPU on an iPad with an adapter', async () => {
-  const nav = { userAgent: 'Macintosh', maxTouchPoints: 5, gpu: { requestAdapter: async () => ({}) } };
-  const app = await appHarness({ nav });
-  assert.equal(app.element('openaiOption').disabled, false);
-  assert.equal(app.attempts[0].device, 'wasm');
-  await vm.runInContext("selectModel('openai')", app.context);
-  assert.equal(app.runtimes[0].disposed, true);
-  assert.equal(app.attempts[1].device, 'webgpu');
-  assert.equal(app.attempts[1].model.dir, 'openai/privacy-filter');
-  assert.equal(app.element('backendBadge').textContent, 'WebGPU');
-  assert.match(app.element('loadDescription').textContent, /917 MB/);
+test('the iPad showcase offers only Rampart and Shield; switching stays on CPU', async () => {
+  const app = await appHarness({ nav: {
+    userAgent: 'Macintosh', maxTouchPoints: 5, gpu: { requestAdapter: async () => ({}) },
+  } });
+  assert.deepEqual(Array.from(vm.runInContext('Object.keys(MODELS).sort()', app.context)), ['rampart', 'shield']);
   await vm.runInContext("selectModel('shield')", app.context);
-  assert.equal(app.attempts[2].device, 'wasm');
-  const shared = await appHarness({ nav, search: '?model=openai' });
-  assert.equal(shared.element('optModel').value, 'openai');
-  assert.equal(shared.attempts[0].device, 'webgpu');
-});
-
-test('failed or absent iPad adapters keep OpenAI disabled with an explanation', async () => {
-  for (const requestAdapter of [async () => null, async () => { throw Error('GPU unavailable'); }]) {
-    const app = await appHarness({ nav: { userAgent: 'iPad', maxTouchPoints: 5, gpu: { requestAdapter } } });
-    assert.equal(app.element('openaiOption').disabled, true);
-    assert.match(app.element('modelHint').textContent, /iPadOS\/iOS 26/);
-    assert.equal(app.attempts[0].device, 'wasm');
-  }
-});
-
-test('OpenAI GPU failure follows the configured GPU-only path without a CPU retry', async () => {
-  const app = await appHarness({
-    nav: { userAgent: 'iPad', maxTouchPoints: 5, gpu: { requestAdapter: async () => ({}) } },
-    search: '?model=openai', failLoad: () => true,
-  });
-  assert.equal(app.attempts.length, 1);
-  assert.equal(app.attempts[0].device, 'webgpu');
-  assert.equal(app.element('loadRecovery').hidden, false);
+  assert.equal(app.runtimes[0].disposed, true);
+  assert.equal(app.attempts[1].device, 'wasm');
+  assert.equal(app.element('optModel').value, 'shield');
 });
 
 test('failed GPU loads fall back in fresh runtimes on startup and model changes', async () => {
@@ -209,8 +187,8 @@ test('failed GPU loads fall back in fresh runtimes on startup and model changes'
 
 test('CPU download failures remain recoverable by switching to Rampart', async () => {
   const app = await appHarness({
-    nav: { userAgent: 'Firefox', maxTouchPoints: 0 },
-    failLoad: data => data.model.dir.includes('bardsai'),
+    nav: { userAgent: 'Firefox', maxTouchPoints: 0 }, search: '?model=shield',
+    failLoad: data => data.model.dir.includes('Shield-82M'),
   });
   assert.equal(app.element('loadRecovery').hidden, false);
   assert.equal(app.element('overlay').classList.values.has('hidden'), false);
@@ -269,7 +247,7 @@ test('missing worker GPU fails before any library or model download', async () =
     importTransformers: async () => { imports++; throw Error('must not be downloaded'); },
   });
   vm.runInContext(source, context);
-  context.self.onmessage({ data: { id: 1, type: 'load', model: { dir: 'openai/privacy-filter' }, device: 'webgpu' } });
+  context.self.onmessage({ data: { id: 1, type: 'load', model: { dir: 'onnx-community/Shield-82M-ONNX' }, device: 'webgpu' } });
   await vm.runInContext('queue', context);
   assert.equal(imports, 0);
   assert.match(messages[0].error, /WebGPU ist im Modell-Worker nicht verfügbar/);

@@ -78,3 +78,18 @@ export async function trackingCache() {
     },
   };
 }
+
+// Remove retired showcase models without touching the remaining models/runtimes.
+// Run on activation, after windows using the previous app version have closed.
+export async function purgeRemovedModels() {
+  const removed = ['bardsai/eu-pii-anonimization-multilang', 'openai/privacy-filter'];
+  const data = await caches.open(DATA_CACHE);
+  for (const request of await data.keys()) {
+    const url = new URL(request.url);
+    if (url.hostname === 'huggingface.co' && removed.some(repo => url.pathname.startsWith(`/${repo}/`))) {
+      await data.delete(request);
+    }
+  }
+  const ready = await caches.open(READY_CACHE);
+  for (const key of ['bardsai', 'openai']) await ready.delete(manifestURL(key));
+}

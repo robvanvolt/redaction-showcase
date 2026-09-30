@@ -1,4 +1,4 @@
-export const APP_CACHE = 'med-redact-app-v1';
+export const APP_CACHE = 'med-redact-app-v2';
 // Share Transformers.js's existing cache to avoid a second copy of large models.
 export const DATA_CACHE = 'transformers-cache';
 export const READY_CACHE = 'med-redact-ready-v1';

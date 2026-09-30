@@ -15,9 +15,9 @@ Internet neu starten – inklusive Modellwechsel und Export.
    Auf Desktop/Android die Browser-Installation oder „App installieren“ nutzen.
 2. **Die installierte App online öffnen**, dann „App installieren & Offline-Demo
    vorbereiten“ aufklappen.
-3. **„Alle verfügbaren Modelle offline speichern“** wählen und warten, bis die
-   Vorbereitung abgeschlossen ist. Alle vier Modelle benötigen zusammen etwa
-   **1.3 GB Gewichte**, dazu Tokenizer und CPU-/GPU-Runtimes. Der Download läuft
+3. **„Alle Modelle offline speichern“** wählen und warten, bis die
+   Vorbereitung abgeschlossen ist. Beide Modelle benötigen zusammen etwa
+   **97 MB Gewichte**, dazu Tokenizer und CPU-/GPU-Runtimes. Der Download läuft
    Modell für Modell; bereits gespeicherte Dateien werden wiederverwendet.
 4. **„Offline-Demo prüfen“** wählen. Jedes verfügbare Modell wird in einem neuen
    Worker mit ausschließlich gespeicherten Modell-/Runtime-Dateien geladen und
@@ -27,8 +27,8 @@ Internet neu starten – inklusive Modellwechsel und Export.
 
 Die Anzeige „Offline-Demo bereit“ prüft die tatsächlichen Cache-Einträge, nicht
 nur einen früheren Download. Fehlen Dateien, z. B. nach Speicherbereinigung,
-wird das Modell nicht mehr als bereit angezeigt. Bei fehlendem WebGPU wird nur
-die Vorbereitung der drei auf diesem Gerät verfügbaren Modelle angeboten.
+wird das Modell nicht mehr als bereit angezeigt. Rampart und Shield-82M können
+auf allen unterstützten Geräten vorbereitet werden.
 Ein Test mit echten Gewichten auf dem jeweiligen iPad bleibt vor der Vorführung
 erforderlich; die automatisierten Browser-Tests verwenden kleine Fixtures.
 
@@ -37,7 +37,9 @@ Die ONNX-Dateien, einschließlich externer Gewichtsdateien, Tokenizer und beide
 WASM-Runtime-Paare teilen sich den vorhandenen Transformers-Cache; es wird keine
 zweite Kopie der großen Modelle angelegt. Metadaten halten fest, welche Dateien
 pro Modell erfolgreich gespeichert wurden. Eingegebene Texte werden nicht
-persistiert. App-Updates ersetzen nur den App-Cache und behalten Modelle.
+persistiert. App-Updates ersetzen den App-Cache und behalten die angebotenen Modelle.
+Die entfernten Modelle OpenAI Privacy Filter und Bardsai werden beim Aktivieren
+dieser App-Version aus dem Modell-Cache entfernt, um Speicher freizugeben.
 
 Safari kann Speicher bei Platzmangel entfernen. Die App beantragt dauerhaften
 Speicher, soweit unterstützt; der Browser entscheidet darüber. Installierte
@@ -53,28 +55,19 @@ Umschaltbar über das Dropdown im Frontend:
 
 | Modell | Klassen | Größe | Quelle |
 | --- | --- | --- | --- |
-| EU-Multilingual (XLM-R) | 36 GDPR-Klassen, 24 EU-Sprachen | ≈279 MB (INT8) | [`bardsai/eu-pii-anonimization-multilang`](https://huggingface.co/bardsai/eu-pii-anonimization-multilang) |
 | Shield-82M (DistilRoBERTa) | 56 PII-Klassen | ≈82 MB (INT8) | [`onnx-community/Shield-82M-ONNX`](https://huggingface.co/onnx-community/Shield-82M-ONNX) |
 | Rampart (MiniLM-L6) | 17 Klassen, 7 Sprachen | ≈14.7 MB (Q4) | [`nationaldesignstudio/rampart`](https://huggingface.co/nationaldesignstudio/rampart) |
-| OpenAI Privacy Filter (MoE 1.4B / 50M aktiv) | 8 Klassen (BIOES), 131k Kontext | ≈917 MB (Q4) | [`openai/privacy-filter`](https://huggingface.co/openai/privacy-filter) |
 
-> Das OpenAI-Modell benötigt **WebGPU** und lädt knapp 1 GB. Es ist auch auf
-> iPad/iPhone auswählbar, sobald der Browser einen WebGPU-Adapter bereitstellt
-> (Safari ab iPadOS/iOS 26). Ohne Adapter bleibt es deaktiviert; ein Link mit
-> `?model=openai` startet dann stattdessen Rampart. Ein verfügbarer Adapter
-> garantiert nicht, dass der Arbeitsspeicher für dieses große Modell reicht.
+Rampart startet standardmäßig. Alte Links auf entfernte Modelle starten ebenfalls Rampart.
 
 ## iPad / Safari
 
 Auf iPad/iPhone (auch mit Safaris Desktop-User-Agent) startet standardmäßig
 **Rampart (14.7 MB)** mit **WASM auf der CPU**. Das hält den Speicherbedarf auf
-Geräten wie dem iPad der 9. Generation niedrig. EU-Multilingual und Shield bleiben
-manuell auswählbar; ihre größeren Downloads benötigen entsprechend mehr Speicher.
+Geräten wie dem iPad der 9. Generation niedrig. Shield bleibt manuell auswählbar;
+sein größerer Download benötigt entsprechend mehr Speicher.
+Beide Modelle verwenden auf iPad/iPhone CPU/WASM.
 Die CPU-Inferenz kann länger dauern als auf einer Desktop-GPU.
-Für OpenAI Privacy Filter wird WebGPU auch auf iPad/iPhone geprüft und verwendet.
-Der Worker prüft seinen GPU-Adapter zusätzlich vor dem Download. Die drei kleinen
-Modelle verwenden auf iPad/iPhone weiterhin CPU/WASM. Ohne GPU zeigt die
-Modellauswahl die konkrete Voraussetzung statt einer allgemeinen Gerätesperre.
 
 Modell und Inferenz laufen in einem eigenen Module-Web-Worker, damit die Oberfläche
 bedienbar bleibt. Beim Modellwechsel wird der vorige Worker samt Modell beendet.
@@ -138,7 +131,7 @@ Diese Tests verwenden simulierte Runtime-Antworten; sie ersetzen keinen Test der
 tatsächlichen Modell-Inferenz auf einem iPad.
 
 Ein zusätzlicher Browser-Test prüft echte Service-/Module-Worker, einen frischen
-Offline-Start, alle vier Modelle, externe ONNX-Dateien, Modellwechsel und Eingabe
+Offline-Start, beide Modelle, Modellwechsel und Eingabe
 mit winzigen lokalen Fixtures und **null Netzwerkzugriffen nach dem Offline-Start**.
 Er benötigt eine vorhandene Playwright-Installation und ein installiertes Chrome:
 
